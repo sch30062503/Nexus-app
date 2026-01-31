@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 type District = { slug: string; name: string; min_score: number; description: string; last_activity?: string };
 type Profile = { id: string; email: string | null; username: string | null; signal_score: number | null; is_founder: boolean | null };
 type Message = { id: string; content: string; created_at: string; district_slug: string; is_founder_msg: boolean; profiles?: { username: string, signal_score: number } };
+type Megaphone = { msg: string; bid: number; owner: string };
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -28,6 +29,12 @@ export default function DashboardPage() {
   const [showSpawner, setShowSpawner] = useState(false);
   const [newDist, setNewDist] = useState({ name: '', slug: '', min: 0, desc: '' });
   const [newUsername, setNewUsername] = useState("");
+  
+  // ECONOMY STATES
+  const [megaphone, setMegaphone] = useState<Megaphone>({ msg: "WAITING FOR SIGNAL...", bid: 0, owner: "SYSTEM" });
+  const [bidInput, setBidInput] = useState<number>(0);
+  const [msgInput, setMsgInput] = useState("");
+
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const triggerToast = (msg: string) => {
@@ -58,6 +65,9 @@ export default function DashboardPage() {
       fetchDistrictMessages(target.slug);
     }
 
+    const { data: megaData } = await supabase.from('global_megaphone').select('*').single();
+    if (megaData) setMegaphone({ msg: megaData.current_message, bid: megaData.bid_amount, owner: megaData.owner_username });
+
     const { data: decreeData } = await supabase.from("decrees").select("content").eq("id", 1).single();
     if (decreeData) setDecree(decreeData.content);
     
@@ -72,6 +82,25 @@ export default function DashboardPage() {
       setGlobalSubjects(Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 5));
     }
     setLoading(false);
+  };
+
+  const handleOverride = async () => {
+    if (!msgInput || bidInput <= megaphone.bid) return triggerToast("BID TOO LOW");
+    if ((profile?.signal_score || 0) < bidInput) return triggerToast("INSUFFICIENT SIGNAL");
+
+    const { data: success } = await supabase.rpc('place_megaphone_bid', {
+      user_id: profile?.id,
+      new_msg: msgInput.toUpperCase(),
+      new_bid: bidInput
+    });
+
+    if (success) {
+      triggerToast("TRANSMISSION SEIZED");
+      setMsgInput("");
+      loadNexus();
+    } else {
+      triggerToast("OVERRIDE FAILED");
+    }
   };
 
   const fetchDistrictMessages = async (slug: string) => {
@@ -114,6 +143,8 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!activeDistrict || !profile) return;
+    
+    // Message Subscription
     const channel = supabase.channel(`nexus-${activeDistrict.slug}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `district_slug=eq.${activeDistrict.slug}` }, 
         async (payload) => {
@@ -125,13 +156,23 @@ export default function DashboardPage() {
           });
         }).subscribe();
 
+    // Megaphone Subscription
+    const megaSub = supabase.channel('megaphone-updates')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'global_megaphone' }, (payload) => {
+        setMegaphone({ msg: payload.new.current_message, bid: payload.new.bid_amount, owner: payload.new.owner_username });
+      }).subscribe();
+
     const presenceChannel = supabase.channel('online-users');
     presenceChannel.on('presence', { event: 'sync' }, () => setOnlineCount(Object.keys(presenceChannel.presenceState()).length))
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED' && profile) await presenceChannel.track({ user_id: profile.id, online_at: new Date().toISOString() });
       });
 
-    return () => { supabase.removeChannel(channel); supabase.removeChannel(presenceChannel); };
+    return () => { 
+      supabase.removeChannel(channel); 
+      supabase.removeChannel(megaSub);
+      supabase.removeChannel(presenceChannel); 
+    };
   }, [activeDistrict, profile]);
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
@@ -151,6 +192,23 @@ export default function DashboardPage() {
   return (
     <div className={`min-h-screen flex flex-col font-mono transition-colors duration-1000 ${feverMode ? 'bg-[#1a0505]' : 'bg-[#050505]'} text-zinc-400 overflow-hidden`}>
       
+      {/* 📢 THE GLOBAL MEGAPHONE TICKER */}
+      <div className="bg-emerald-500/10 border-b border-emerald-500/30 p-4 flex flex-col md:flex-row gap-4 items-center justify-between z-50">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[10px] font-black text-emerald-500 animate-pulse uppercase tracking-[0.2em]">Global_Transmission // Stake: {megaphone.bid}</span>
+            <span className="text-[9px] text-zinc-600 font-bold tracking-widest">Sovereign: {megaphone.owner}</span>
+          </div>
+          <p className="text-sm text-white font-black italic tracking-tight uppercase">"{megaphone.msg}"</p>
+        </div>
+        
+        <div className="flex gap-2 bg-black/50 p-2 border border-zinc-800 rounded">
+          <input value={msgInput} onChange={(e) => setMsgInput(e.target.value)} placeholder="OVERRIDE_MSG" className="bg-transparent text-[10px] outline-none w-40 text-emerald-400 font-bold" />
+          <input type="number" onChange={(e) => setBidInput(parseInt(e.target.value))} placeholder={`MIN:${megaphone.bid + 1}`} className="bg-transparent text-[10px] outline-none w-20 border-l border-zinc-800 pl-2 text-white" />
+          <button onClick={handleOverride} className="bg-emerald-500 text-black px-3 py-1 text-[10px] font-black hover:bg-white transition-all">BID</button>
+        </div>
+      </div>
+
       {/* GENESIS BAR */}
       <div className={`w-full py-2 px-4 border-b flex justify-between items-center ${feverMode ? 'bg-red-500/10 border-red-500' : 'bg-amber-500/5 border-amber-500/30'}`}>
         <div className="flex items-center gap-3">
