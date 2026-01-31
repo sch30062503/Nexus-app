@@ -32,7 +32,19 @@ export default function DashboardPage() {
   const [onlineCount, setOnlineCount] = useState(1);
   const [isCooldown, setIsCooldown] = useState(false);
   const [feverMode, setFeverMode] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<Profile[]>([]); // NEW: Leaderboard State
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // NEW: Leaderboard Fetch Logic
+  const fetchLeaderboard = async () => {
+    const { data } = await supabase
+      .from("profiles")
+      .select("id, email, signal_score, is_founder")
+      .eq("is_founder", false)
+      .order("signal_score", { ascending: false })
+      .limit(5);
+    if (data) setLeaderboard(data as Profile[]);
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -48,6 +60,7 @@ export default function DashboardPage() {
       const { data: msgData } = await supabase.from("messages").select("*, profiles(email)").order("created_at", { ascending: true }).limit(20);
       if (msgData) setMessages(msgData as any);
 
+      await fetchLeaderboard(); // Initial leaderboard load
       setLoading(false);
     };
     load();
@@ -65,6 +78,7 @@ export default function DashboardPage() {
         async (payload) => {
           const { data: userData } = await supabase.from("profiles").select("email").eq("id", payload.new.profile_id).single();
           setMessages((prev) => [...prev.slice(-19), { ...payload.new, profiles: userData } as Message]);
+          fetchLeaderboard(); // Refresh scores when messages arrive
         })
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "messages" },
         (payload) => setMessages((prev) => prev.filter(m => m.id !== payload.old.id)))
@@ -72,7 +86,10 @@ export default function DashboardPage() {
 
     const presenceChannel = supabase.channel('online-users');
     presenceChannel
-      .on('presence', { event: 'sync' }, () => setOnlineCount(Object.keys(presenceChannel.presenceState()).length))
+      .on('presence', { event: 'sync' }, () => {
+        setOnlineCount(Object.keys(presenceChannel.presenceState()).length);
+        fetchLeaderboard(); // Refresh leaderboard when people join/leave
+      })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           await presenceChannel.track({ user_id: profile.id, online_at: new Date().toISOString() });
@@ -127,6 +144,7 @@ export default function DashboardPage() {
       if (gainAmount > 0) {
         await supabase.rpc('increment_signal_score', { user_id: profile.id, amount: gainAmount });
         setProfile(prev => prev ? { ...prev, signal_score: (prev.signal_score || 0) + gainAmount } : null);
+        fetchLeaderboard();
       }
     }
 
@@ -198,9 +216,26 @@ export default function DashboardPage() {
                   <div key={i} className="h-8 border border-zinc-900 rounded bg-black/20" />
                 ))}
               </div>
-              <p className={`text-[9px] mt-3 text-center uppercase ${feverMode ? 'text-red-600' : 'text-emerald-800'}`}>
-                {onlineCount} Nodes Synchronized
-              </p>
+            </div>
+
+            {/* NEW: HALL OF POWER (LEADERBOARD) */}
+            <div className={`rounded-lg border p-4 ${feverMode ? 'border-red-500/30 bg-red-950/20' : 'border-zinc-800 bg-zinc-900/40'}`}>
+              <p className="text-[9px] uppercase text-zinc-500 mb-3 tracking-widest text-center">Hall_of_Power</p>
+              <div className="space-y-2">
+                {leaderboard.length > 0 ? leaderboard.map((user, index) => (
+                  <div key={user.id} className="flex justify-between items-center text-[10px]">
+                    <span className="text-zinc-600 font-bold">{index + 1}.</span>
+                    <span className={`truncate max-w-[60px] ${feverMode ? 'text-red-200' : 'text-zinc-400'}`}>
+                      {user.email?.split('@')[0].toUpperCase()}
+                    </span>
+                    <span className={`font-bold ${feverMode ? 'text-red-400' : 'text-emerald-500'}`}>
+                      {user.signal_score || 0}
+                    </span>
+                  </div>
+                )) : (
+                  <p className="text-[8px] text-center text-zinc-600 uppercase">Awaiting Signal...</p>
+                )}
+              </div>
             </div>
 
             {profile.is_founder && (
@@ -218,6 +253,7 @@ export default function DashboardPage() {
           }`}>
             <div className={`p-3 border-b flex justify-between items-center ${feverMode ? 'border-red-500/40 bg-red-900/20' : 'border-zinc-800 bg-zinc-900/40'}`}>
               <span className={`text-[10px] uppercase tracking-widest ${feverMode ? 'text-red-400' : 'text-zinc-500'}`}>Signal_Wall.log</span>
+              {feverMode && <span className="text-[9px] text-red-500 animate-pulse font-bold">FEVER: 2X GAIN</span>}
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {messages.map((msg) => (
