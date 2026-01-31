@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 const FOUNDER_HOLD_MS = 3000;
 const MANIFESTO_LINES = [
@@ -67,6 +68,12 @@ export default function Home() {
   const [founderMode, setFounderMode] = useState(false);
   const [glitchActive, setGlitchActive] = useState(false);
   const founderHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [signUpEmail, setSignUpEmail] = useState("");
+  const [signUpPassword, setSignUpPassword] = useState("");
+  const [signUpSuccess, setSignUpSuccess] = useState(false);
+  const [signUpError, setSignUpError] = useState<string | null>(null);
+  const [signUpLoading, setSignUpLoading] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -142,6 +149,8 @@ export default function Home() {
   const closeModal = () => {
     setModalOpen(false);
     setModalPhase("challenge");
+    setSignUpSuccess(false);
+    setSignUpError(null);
   };
 
   const handleAnswer = (answer: "Yes" | "No" | "Depends on Routing") => {
@@ -152,6 +161,47 @@ export default function Home() {
       setShakeTrigger((t) => t + 1);
     }
   };
+
+  const getSignalScore = useCallback(() => {
+    if (typeof window === "undefined") return 0;
+    if (founderMode) return 10000;
+    const stored = localStorage.getItem("signal_score");
+    return stored ? parseInt(stored, 10) : 0;
+  }, [founderMode]);
+
+  const handleSignUp = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      setSignUpError(null);
+      setSignUpLoading(true);
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email: signUpEmail,
+          password: signUpPassword,
+        });
+        if (error) throw error;
+        if (data.user) {
+          const signalScore = getSignalScore();
+          await supabase.from("profiles").upsert(
+            {
+              id: data.user.id,
+              email: data.user.email ?? signUpEmail,
+              signal_score: signalScore,
+            },
+            { onConflict: "id" }
+          );
+        }
+        setSignUpSuccess(true);
+      } catch (err) {
+        setSignUpError(
+          err instanceof Error ? err.message : "Sign up failed. Try again."
+        );
+      } finally {
+        setSignUpLoading(false);
+      }
+    },
+    [signUpEmail, signUpPassword, getSignalScore]
+  );
 
   return (
     <div
@@ -292,36 +342,60 @@ export default function Home() {
                 <>
                   <p className="mb-4 text-emerald-400">Access Granted</p>
                   <div className="rounded border border-zinc-700/80 bg-zinc-900/50 p-4">
-                    <p className="mb-4 text-[11px] uppercase tracking-wider text-zinc-500">
-                      Sign up
-                    </p>
-                    <form
-                      className="flex flex-col gap-3"
-                      onSubmit={(e) => e.preventDefault()}
-                    >
-                      <label className="flex flex-col gap-1.5 text-[11px] text-zinc-500">
-                        Email
-                        <input
-                          type="email"
-                          placeholder="you@domain.com"
-                          className="rounded border border-zinc-600 bg-zinc-800/80 px-3 py-2 font-mono text-sm text-zinc-200 placeholder:text-zinc-500 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
-                        />
-                      </label>
-                      <label className="flex flex-col gap-1.5 text-[11px] text-zinc-500">
-                        Password
-                        <input
-                          type="password"
-                          placeholder="••••••••"
-                          className="rounded border border-zinc-600 bg-zinc-800/80 px-3 py-2 font-mono text-sm text-zinc-200 placeholder:text-zinc-500 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
-                        />
-                      </label>
-                      <button
-                        type="submit"
-                        className="mt-2 rounded border border-emerald-500/50 bg-emerald-500/20 px-4 py-2 text-sm font-medium text-emerald-400 transition-colors hover:bg-emerald-500/30"
-                      >
-                        Create account
-                      </button>
-                    </form>
+                    {signUpSuccess ? (
+                      <p className="text-sm text-emerald-400/90">
+                        Check your email for a verification link.
+                      </p>
+                    ) : (
+                      <>
+                        <p className="mb-4 text-[11px] uppercase tracking-wider text-zinc-500">
+                          Sign up
+                        </p>
+                        <form
+                          className="flex flex-col gap-3"
+                          onSubmit={handleSignUp}
+                        >
+                          {signUpError && (
+                            <p className="text-[11px] text-red-400">
+                              {signUpError}
+                            </p>
+                          )}
+                          <label className="flex flex-col gap-1.5 text-[11px] text-zinc-500">
+                            Email
+                            <input
+                              type="email"
+                              placeholder="you@domain.com"
+                              value={signUpEmail}
+                              onChange={(e) => setSignUpEmail(e.target.value)}
+                              required
+                              className="rounded border border-zinc-600 bg-zinc-800/80 px-3 py-2 font-mono text-sm text-zinc-200 placeholder:text-zinc-500 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1.5 text-[11px] text-zinc-500">
+                            Password
+                            <input
+                              type="password"
+                              placeholder="••••••••"
+                              value={signUpPassword}
+                              onChange={(e) =>
+                                setSignUpPassword(e.target.value)
+                              }
+                              required
+                              className="rounded border border-zinc-600 bg-zinc-800/80 px-3 py-2 font-mono text-sm text-zinc-200 placeholder:text-zinc-500 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
+                            />
+                          </label>
+                          <button
+                            type="submit"
+                            disabled={signUpLoading}
+                            className="mt-2 rounded border border-emerald-500/50 bg-emerald-500/20 px-4 py-2 text-sm font-medium text-emerald-400 transition-colors hover:bg-emerald-500/30 disabled:opacity-50"
+                          >
+                            {signUpLoading
+                              ? "Creating account…"
+                              : "Create account"}
+                          </button>
+                        </form>
+                      </>
+                    )}
                   </div>
                 </>
               )}
