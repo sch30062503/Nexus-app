@@ -15,6 +15,7 @@ export default function DashboardPage() {
   const [activeDistrict, setActiveDistrict] = useState<District | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
+  const [filterQuery, setFilterQuery] = useState(""); // TUNER STATE
   const [loading, setLoading] = useState(true);
   const [onlineCount, setOnlineCount] = useState(1);
   const [isCooldown, setIsCooldown] = useState(false);
@@ -22,6 +23,7 @@ export default function DashboardPage() {
   const [decree, setDecree] = useState("");
   const [isEditingDecree, setIsEditingDecree] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [trendingTags, setTrendingTags] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const [showSpawner, setShowSpawner] = useState(false);
@@ -30,6 +32,20 @@ export default function DashboardPage() {
   const triggerToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
+  };
+
+  // --- DISCOVERY LOGIC: Extract Hashtags ---
+  const extractTrendingTags = (msgs: Message[]) => {
+    const counts: Record<string, number> = {};
+    msgs.forEach(m => {
+      const tags = m.content.match(/#\w+/g);
+      tags?.forEach(tag => {
+        const t = tag.toLowerCase();
+        counts[t] = (counts[t] || 0) + 1;
+      });
+    });
+    const sorted = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 5);
+    setTrendingTags(sorted);
   };
 
   const loadNexus = async () => {
@@ -42,16 +58,13 @@ export default function DashboardPage() {
     const { data: dData } = await supabase.from("districts").select("*").order('min_score', { ascending: true });
     if (dData) {
       setDistricts(dData);
-      // Ensure we don't lose the active district on refresh if it still exists
-      const current = activeDistrict ? dData.find(d => d.slug === activeDistrict.slug) : dData[0];
-      const target = current || dData[0];
+      const target = activeDistrict || dData[0];
       setActiveDistrict(target);
       fetchDistrictMessages(target.slug);
     }
 
     const { data: decreeData } = await supabase.from("decrees").select("content").eq("id", 1).single();
     if (decreeData) setDecree(decreeData.content);
-
     setLoading(false);
   };
 
@@ -60,198 +73,139 @@ export default function DashboardPage() {
       .select("*, profiles(email, signal_score)")
       .eq("district_slug", slug)
       .order("created_at", { ascending: true })
-      .limit(50);
-    if (data) setMessages(data as any);
+      .limit(100);
+    if (data) {
+      setMessages(data as any);
+      extractTrendingTags(data as any);
+    }
   };
 
   useEffect(() => { loadNexus(); }, []);
 
   useEffect(() => {
     if (!activeDistrict || !profile) return;
-    
     const channel = supabase.channel(`nexus-${activeDistrict.slug}`)
-      .on("postgres_changes", { 
-        event: "INSERT", 
-        schema: "public", 
-        table: "messages", 
-        filter: `district_slug=eq.${activeDistrict.slug}` 
-      }, async (payload) => {
-        const { data: uData } = await supabase.from("profiles").select("email, signal_score").eq("id", payload.new.profile_id).single();
-        setMessages((prev) => [...prev, { ...payload.new, profiles: uData } as Message]);
-      })
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "messages" }, (payload) => {
-        setMessages((prev) => prev.filter(m => m.id !== payload.old.id));
-      })
-      .subscribe();
-
-    const feverChannel = supabase.channel('global-events').on('broadcast', { event: 'FEVER_TOGGLE' }, (payload) => setFeverMode(payload.payload.active)).subscribe();
-    
-    const presenceChannel = supabase.channel('online-users');
-    presenceChannel.on('presence', { event: 'sync' }, () => setOnlineCount(Object.keys(presenceChannel.presenceState()).length)).subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') await presenceChannel.track({ user_id: profile.id, online_at: new Date().toISOString() });
-    });
-
-    return () => { 
-      supabase.removeChannel(channel); 
-      supabase.removeChannel(feverChannel);
-      supabase.removeChannel(presenceChannel);
-    };
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `district_slug=eq.${activeDistrict.slug}` }, 
+        async (payload) => {
+          const { data: uData } = await supabase.from("profiles").select("email, signal_score").eq("id", payload.new.profile_id).single();
+          setMessages((prev) => {
+            const next = [...prev, { ...payload.new, profiles: uData } as Message];
+            extractTrendingTags(next);
+            return next;
+          });
+        }).subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [activeDistrict, profile]);
 
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-
-  const toggleFever = () => {
-    const newState = !feverMode;
-    setFeverMode(newState);
-    supabase.channel('global-events').send({ type: 'broadcast', event: 'FEVER_TOGGLE', payload: { active: newState } });
-    triggerToast(newState ? "FEVER ENGAGED" : "FEVER EXPIRED");
-  };
-
-  const spawnDistrict = async () => {
-    if (!newDist.slug || !newDist.name) return triggerToast("MISSING DATA");
-    const { error } = await supabase.from('districts').insert({
-      name: newDist.name, slug: newDist.slug, min_score: newDist.min, description: newDist.desc
-    });
-    if (!error) {
-      triggerToast("REALITY MANIFESTED");
-      setShowSpawner(false);
-      loadNexus();
-    } else {
-      triggerToast("SPAWN FAILED");
-    }
-  };
-
-  const collapseDistrict = async (slug: string) => {
-    if (slug === 'plaza') return triggerToast("THE PLAZA CANNOT BE COLLAPSED");
-    const { error } = await supabase.from('districts').delete().eq('slug', slug);
-    if (!error) {
-      triggerToast("REALITY COLLAPSED");
-      if (activeDistrict?.slug === slug) setActiveDistrict(districts.find(d => d.slug === 'plaza') || null);
-      loadNexus();
-    }
-  };
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, filterQuery]);
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !profile || isCooldown || !activeDistrict) return;
     setIsCooldown(true);
-    const { error } = await supabase.from("messages").insert({ 
-      content: newMessage, 
-      profile_id: profile.id, 
-      district_slug: activeDistrict.slug, 
-      is_founder_msg: profile.is_founder 
-    });
-    if (!error && !profile.is_founder) {
+    await supabase.from("messages").insert({ content: newMessage, profile_id: profile.id, district_slug: activeDistrict.slug, is_founder_msg: profile.is_founder });
+    if (!profile.is_founder) {
       await supabase.rpc('increment_signal_score', { user_id: profile.id, amount: feverMode ? 10 : 5 });
-      setProfile(prev => prev ? { ...prev, signal_score: (prev.signal_score || 0) + (feverMode ? 10 : 5) } : null);
     }
     setNewMessage("");
     setTimeout(() => setIsCooldown(false), 800);
   };
 
-  if (loading || !profile) return <div className="p-10 font-mono text-emerald-500 animate-pulse text-center">RECONSTRUCTING REALITY...</div>;
+  if (loading || !profile) return <div className="p-10 font-mono text-emerald-500 animate-pulse text-center">Tuning Frequencies...</div>;
 
   return (
     <div className={`min-h-screen flex flex-col font-mono transition-colors duration-1000 ${feverMode ? 'bg-[#1a0505]' : 'bg-[#050505]'} text-zinc-400 overflow-hidden`}>
       
+      {/* DECREE BAR */}
       <div className={`w-full py-2 px-4 border-b flex justify-between items-center ${feverMode ? 'bg-red-500/10 border-red-500' : 'bg-amber-500/5 border-amber-500/30'}`}>
         <div className="flex items-center gap-3">
-          <span className="text-[10px] text-amber-500 font-black uppercase">Genesis_Decree:</span>
-          {isEditingDecree ? (
-            <input value={decree} onChange={(e) => setDecree(e.target.value)} onBlur={async () => { await supabase.from("decrees").update({ content: decree }).eq("id", 1); setIsEditingDecree(false); }} className="bg-transparent border-b border-white/20 text-xs text-white outline-none w-96" autoFocus />
-          ) : (
-            <p className="text-xs text-zinc-300 italic">"{decree}"</p>
-          )}
+          <span className="text-[10px] text-amber-500 font-black uppercase tracking-widest">Genesis_Decree:</span>
+          <p className="text-xs text-zinc-300 italic">"{decree}"</p>
         </div>
-        {profile.is_founder && <button onClick={() => setIsEditingDecree(true)} className="text-[9px] text-zinc-600">[EDIT]</button>}
+        {profile.is_founder && <button onClick={() => setIsEditingDecree(true)} className="text-[9px] text-zinc-600 hover:text-white transition-colors">[EDIT_ARCHIVE]</button>}
       </div>
 
       <div className="flex-1 flex overflow-hidden">
+        {/* SIDEBAR */}
         <aside className="w-80 border-r border-zinc-900 bg-zinc-950 p-6 flex flex-col gap-6">
           <div className="flex justify-between items-center">
             <p className="text-[10px] font-black tracking-[0.3em] text-zinc-600 uppercase">Districts</p>
-            {profile.is_founder && <button onClick={() => setShowSpawner(!showSpawner)} className="text-[10px] text-amber-500 font-bold px-2 py-1 rounded transition-all underline underline-offset-4">SPAWN</button>}
+            {profile.is_founder && <button onClick={() => setShowSpawner(!showSpawner)} className="text-[10px] text-amber-500 font-bold underline">SPAWN</button>}
           </div>
-
-          {showSpawner && (
-            <div className="p-4 border border-amber-500/30 bg-amber-500/5 rounded space-y-2">
-              <input placeholder="Name" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, name: e.target.value})} />
-              <input placeholder="Slug" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, slug: e.target.value})} />
-              <input placeholder="Min Signal" type="number" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, min: parseInt(e.target.value)})} />
-              <button onClick={spawnDistrict} className="w-full bg-amber-500 text-black py-2 text-[10px] font-black uppercase">Finalize</button>
-            </div>
-          )}
 
           <nav className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
             {districts.map((d) => (
-              <div key={d.slug} className="group relative">
-                <button onClick={() => {
-                  if (!profile.is_founder && (profile.signal_score || 0) < d.min_score) return triggerToast(`LOCKED: NEED ${d.min_score} SIGNAL`);
-                  setActiveDistrict(d);
-                  fetchDistrictMessages(d.slug);
-                }} className={`w-full text-left p-4 border transition-all rounded ${activeDistrict?.slug === d.slug ? 'border-emerald-500 bg-emerald-500/5' : 'border-zinc-900 opacity-60 hover:opacity-100 hover:border-zinc-700'}`}>
-                  <div className="flex justify-between items-center">
-                    <span className={`text-[11px] font-black uppercase ${activeDistrict?.slug === d.slug ? 'text-white' : 'text-zinc-500'}`}>{d.name}</span>
-                    <span className="text-[9px] text-zinc-700">SIG: {d.min_score}</span>
-                  </div>
-                </button>
-                
-                {profile.is_founder && d.slug !== 'plaza' && (
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); collapseDistrict(d.slug); }}
-                    className="absolute -right-1 -top-1 opacity-0 group-hover:opacity-100 bg-red-600 text-white text-[7px] font-black px-1 rounded z-10 hover:bg-red-500"
-                  >
-                    COLLAPSE
-                  </button>
-                )}
-              </div>
+              <button key={d.slug} onClick={() => { setActiveDistrict(d); fetchDistrictMessages(d.slug); setFilterQuery(""); }} 
+                className={`w-full text-left p-4 border transition-all rounded ${activeDistrict?.slug === d.slug ? 'border-emerald-500 bg-emerald-500/5' : 'border-zinc-900 opacity-40 hover:opacity-100 hover:border-zinc-700'}`}>
+                <div className="flex justify-between items-center">
+                  <span className="text-[11px] font-black uppercase">{d.name}</span>
+                  <span className="text-[8px] opacity-50">SIG: {d.min_score}</span>
+                </div>
+              </button>
             ))}
           </nav>
 
-          <div className="p-4 border border-zinc-800 bg-zinc-900/20 rounded text-center">
-            <p className="text-[9px] text-zinc-500 mb-3 uppercase tracking-widest font-bold">Presence</p>
-            <div className="flex flex-wrap justify-center gap-2">
-              <div className={`h-4 w-4 border border-amber-500 text-amber-500 flex items-center justify-center text-[8px] ${feverMode ? 'animate-ping' : ''}`}>⬢</div>
-              {Array.from({ length: Math.max(0, onlineCount - 1) }).map((_, i) => (
-                <div key={i} className="h-4 w-4 border border-emerald-500/30 text-emerald-500/50 flex items-center justify-center text-[8px] animate-pulse">⬡</div>
-              ))}
+          {/* TRENDING TAGS SECTION */}
+          <div className="p-4 border border-zinc-900 bg-black/40 rounded">
+            <p className="text-[9px] text-zinc-600 mb-3 uppercase tracking-widest font-bold">Live_Frequencies</p>
+            <div className="flex flex-wrap gap-2">
+              {trendingTags.length > 0 ? trendingTags.map(tag => (
+                <button key={tag} onClick={() => setFilterQuery(tag)} className="text-[10px] bg-zinc-900 px-2 py-1 rounded text-emerald-500 hover:bg-emerald-500 hover:text-black transition-all">
+                  {tag}
+                </button>
+              )) : <span className="text-[10px] italic text-zinc-800">No active tags...</span>}
             </div>
           </div>
 
           <div className="p-5 border-t border-zinc-900 bg-black/40">
-            <p className="text-[9px] text-zinc-600 mb-1 font-bold">YOUR_SIGNAL</p>
+            <p className="text-[9px] text-zinc-600 mb-1 font-bold">SIGNAL_SCORE</p>
             <p className="text-3xl font-black text-white tracking-tighter">{profile.signal_score?.toLocaleString()}</p>
-            {profile.is_founder && (
-              <button onClick={toggleFever} className={`w-full mt-4 p-2 text-[9px] font-black border transition-all ${feverMode ? 'bg-red-600 border-red-500 text-white' : 'border-red-900/50 text-red-900'}`}>FEVER_TOGGLE</button>
-            )}
           </div>
         </aside>
 
+        {/* MAIN FEED */}
         <main className="flex-1 flex flex-col relative bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
-          <header className="p-6 border-b border-zinc-900 bg-black/80 flex justify-between items-center">
+          <header className="p-6 border-b border-zinc-900 bg-black/95 flex justify-between items-center backdrop-blur-xl z-20">
             <div className="flex items-center gap-4">
-              <span className="text-[10px] text-zinc-700 uppercase tracking-widest">District //</span>
+              <span className="text-[10px] text-zinc-700 uppercase tracking-widest font-bold">Stream //</span>
               <span className="text-sm font-black uppercase text-white tracking-widest">{activeDistrict?.name}</span>
             </div>
-            {toast && <span className="text-[10px] font-black text-amber-500 animate-pulse">{toast}</span>}
+
+            {/* THE TUNER UI */}
+            <div className="flex items-center gap-3 bg-zinc-900/50 border border-zinc-800 px-4 py-1.5 rounded-full transition-all focus-within:border-emerald-500/50">
+              <span className="text-[9px] text-emerald-500 font-black tracking-tighter">TUNER:</span>
+              <input value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} placeholder="Search signal..." className="bg-transparent outline-none text-[10px] text-zinc-200 w-32" />
+              {filterQuery && <button onClick={() => setFilterQuery("")} className="text-[9px] text-zinc-500 hover:text-white">×</button>}
+            </div>
           </header>
 
           <div className="flex-1 overflow-y-auto p-10 space-y-4">
-            {messages.map((msg) => (
-              <div key={msg.id} className={`group border-l-2 py-2 px-5 transition-all ${msg.is_founder_msg ? 'border-amber-500 bg-amber-500/5' : 'border-zinc-800'}`}>
+            {messages
+              .filter(m => m.content.toLowerCase().includes(filterQuery.toLowerCase()))
+              .map((msg) => (
+              <div key={msg.id} className={`group border-l-2 py-2 px-5 transition-all ${msg.is_founder_msg ? 'border-amber-500 bg-amber-500/5' : 'border-zinc-800 hover:border-zinc-700'}`}>
                 <div className="flex gap-4 items-center mb-1">
-                  <span className={`text-[9px] font-black ${msg.is_founder_msg ? 'text-amber-500' : (msg.profiles?.signal_score || 0) >= 2000 ? 'text-emerald-400 animate-pulse' : 'text-zinc-600'}`}>
-                    {msg.is_founder_msg ? 'GENESIS' : (msg.profiles?.signal_score || 0) >= 2000 ? 'ALPHA' : 'CITIZEN'} // {msg.profiles?.email?.split('@')[0].toUpperCase()}
+                  <span className={`text-[9px] font-black tracking-widest ${msg.is_founder_msg ? 'text-amber-500' : 'text-zinc-500'}`}>
+                    {msg.is_founder_msg ? 'GENESIS' : 'CITIZEN'} // {msg.profiles?.email?.split('@')[0].toUpperCase()}
                   </span>
+                  <span className="text-[8px] text-zinc-900">{new Date(msg.created_at).toLocaleTimeString()}</span>
                 </div>
-                <p className={`text-sm ${msg.is_founder_msg ? 'text-amber-100' : 'text-zinc-300'}`}>{msg.content}</p>
+                <p className={`text-sm leading-relaxed ${msg.is_founder_msg ? 'text-amber-100 font-medium' : 'text-zinc-300'}`}>
+                  {msg.content.split(' ').map((word, i) => (
+                    word.startsWith('#') ? <span key={i} className="text-emerald-500 font-bold">{word} </span> : word + ' '
+                  ))}
+                </p>
               </div>
             ))}
             <div ref={scrollRef} />
           </div>
 
           <form onSubmit={sendMessage} className="p-8 border-t border-zinc-900 bg-black/90">
-            <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} disabled={isCooldown} placeholder={isCooldown ? "RECHARGING..." : `INPUT SIGNAL...`} className="w-full bg-transparent outline-none text-sm text-emerald-400 font-bold placeholder:text-zinc-900" />
+            <div className="max-w-4xl mx-auto">
+              <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} disabled={isCooldown} 
+                placeholder={isCooldown ? "TRANSMITTING..." : `INPUT SIGNAL TO ${activeDistrict?.name.toUpperCase()}... (Use #tags to trend)`} 
+                className="w-full bg-transparent outline-none text-sm text-emerald-400 font-bold placeholder:text-zinc-900" />
+            </div>
           </form>
         </main>
       </div>
