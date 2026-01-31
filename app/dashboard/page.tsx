@@ -18,7 +18,7 @@ type Message = {
   created_at: string;
   profile_id: string;
   is_founder_msg: boolean;
-  profiles?: { email: string };
+  profiles?: { email: string, signal_score: number }; // Added score to profile fetch
 };
 
 export default function DashboardPage() {
@@ -33,8 +33,36 @@ export default function DashboardPage() {
   const [isCooldown, setIsCooldown] = useState(false);
   const [feverMode, setFeverMode] = useState(false);
   const [leaderboard, setLeaderboard] = useState<Profile[]>([]);
-  const [toast, setToast] = useState<string | null>(null); // NEW: Notification state
+  const [toast, setToast] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // --- Helper: Visual Weighting Logic ---
+  const getMessageStyle = (score: number, isFounder: boolean) => {
+    if (isFounder) return {
+      container: "bg-amber-500/10 border-l-4 border-amber-500 py-3 px-4 my-2 shadow-[0_0_20px_rgba(245,158,11,0.15)]",
+      name: "text-amber-400 font-black text-sm tracking-tighter uppercase",
+      content: "text-amber-100 text-sm font-medium",
+      badge: "GENESIS"
+    };
+    if (score >= 2000) return {
+      container: "bg-emerald-500/5 border-l-2 border-emerald-500 py-2 px-3 my-1 animate-pulse",
+      name: "text-emerald-400 font-bold text-xs uppercase",
+      content: "text-emerald-50 text-xs",
+      badge: "ALPHA"
+    };
+    if (score >= 500) return {
+      container: "py-1 px-2 border-l border-emerald-900/50",
+      name: "text-emerald-600 font-bold text-[10px]",
+      content: "text-zinc-200 text-xs",
+      badge: "SENTRY"
+    };
+    return {
+      container: "py-1 px-2",
+      name: "text-zinc-600 font-medium text-[10px]",
+      content: "text-zinc-400 text-xs",
+      badge: "CITIZEN"
+    };
+  };
 
   const fetchLeaderboard = async () => {
     const { data } = await supabase
@@ -43,18 +71,7 @@ export default function DashboardPage() {
       .eq("is_founder", false)
       .order("signal_score", { ascending: false })
       .limit(5);
-    
-    if (data) {
-      // Logic for Founder Notification
-      if (profile?.is_founder && leaderboard.length > 0) {
-        const newTopUser = data[0];
-        const oldTopUser = leaderboard[0];
-        if (newTopUser.id !== oldTopUser.id && newTopUser.signal_score! > oldTopUser.signal_score!) {
-          triggerToast(`NEW ALPHA DETECTED: ${newTopUser.email?.split('@')[0].toUpperCase()}`);
-        }
-      }
-      setLeaderboard(data as Profile[]);
-    }
+    if (data) setLeaderboard(data as Profile[]);
   };
 
   const triggerToast = (msg: string) => {
@@ -73,7 +90,8 @@ export default function DashboardPage() {
       const { data: decreeData } = await supabase.from("decrees").select("content").eq("id", 1).single();
       if (decreeData) setDecree(decreeData.content);
 
-      const { data: msgData } = await supabase.from("messages").select("*, profiles(email)").order("created_at", { ascending: true }).limit(20);
+      // Fetch messages with profile scores for weighting
+      const { data: msgData } = await supabase.from("messages").select("*, profiles(email, signal_score)").order("created_at", { ascending: true }).limit(25);
       if (msgData) setMessages(msgData as any);
 
       await fetchLeaderboard();
@@ -84,199 +102,116 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!profile) return;
-
-    const feverChannel = supabase.channel('global-events')
-      .on('broadcast', { event: 'FEVER_TOGGLE' }, (payload) => {
-        setFeverMode(payload.payload.active);
-        if (payload.payload.active) triggerToast("FEVER MODE ENGAGED");
-      })
-      .subscribe();
-
     const msgChannel = supabase.channel("nexus-wall")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, 
         async (payload) => {
-          const { data: userData } = await supabase.from("profiles").select("email").eq("id", payload.new.profile_id).single();
-          setMessages((prev) => [...prev.slice(-19), { ...payload.new, profiles: userData } as Message]);
+          const { data: userData } = await supabase.from("profiles").select("email, signal_score").eq("id", payload.new.profile_id).single();
+          setMessages((prev) => [...prev.slice(-24), { ...payload.new, profiles: userData } as Message]);
           fetchLeaderboard();
         })
       .subscribe();
 
-    const presenceChannel = supabase.channel('online-users');
-    presenceChannel
-      .on('presence', { event: 'sync' }, () => {
-        setOnlineCount(Object.keys(presenceChannel.presenceState()).length);
-        fetchLeaderboard();
-      })
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await presenceChannel.track({ user_id: profile.id, online_at: new Date().toISOString() });
-        }
-      });
+    const feverChannel = supabase.channel('global-events')
+      .on('broadcast', { event: 'FEVER_TOGGLE' }, (payload) => setFeverMode(payload.payload.active))
+      .subscribe();
 
     return () => {
-      supabase.removeChannel(feverChannel);
       supabase.removeChannel(msgChannel);
-      supabase.removeChannel(presenceChannel);
+      supabase.removeChannel(feverChannel);
     };
   }, [profile]);
 
-  useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  const toggleFever = () => {
-    const newState = !feverMode;
-    setFeverMode(newState);
-    supabase.channel('global-events').send({
-      type: 'broadcast',
-      event: 'FEVER_TOGGLE',
-      payload: { active: newState },
-    });
-  };
-
-  const updateDecree = async () => {
-    await supabase.from("decrees").update({ content: decree }).eq("id", 1);
-    setIsEditingDecree(false);
-    triggerToast("DECREE UPDATED");
-  };
-
-  const burnMessage = async (id: string) => {
-    await supabase.from("messages").delete().eq("id", id);
-    triggerToast("SIGNAL PURGED");
-  };
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !profile || isCooldown) return;
-
     setIsCooldown(true);
+
     const { error } = await supabase.from("messages").insert({ 
       content: newMessage, 
       profile_id: profile.id, 
       is_founder_msg: profile.is_founder 
     });
 
-    if (!error) {
-      const baseGain = 5;
-      const multiplier = feverMode ? 2 : 1;
-      const gainAmount = profile.is_founder ? 0 : baseGain * multiplier;
-      if (gainAmount > 0) {
-        await supabase.rpc('increment_signal_score', { user_id: profile.id, amount: gainAmount });
-        setProfile(prev => prev ? { ...prev, signal_score: (prev.signal_score || 0) + gainAmount } : null);
-        fetchLeaderboard();
-      }
+    if (!error && !profile.is_founder) {
+      const gain = feverMode ? 10 : 5;
+      await supabase.rpc('increment_signal_score', { user_id: profile.id, amount: gain });
+      setProfile(prev => prev ? { ...prev, signal_score: (prev.signal_score || 0) + gain } : null);
     }
-
     setNewMessage("");
-    setTimeout(() => setIsCooldown(false), 2000);
+    setTimeout(() => setIsCooldown(false), 1500);
   };
 
   if (loading || !profile) return <div className="p-10 font-mono text-emerald-500 animate-pulse">Establishing Uplink...</div>;
 
   return (
-    <div className={`min-h-screen transition-all duration-700 font-mono p-4 md:p-10 ${
-      feverMode ? 'bg-[#1a0505] text-red-100' : 'bg-[#0a0a0a] text-zinc-300'
-    }`}>
-      {/* TOAST SYSTEM */}
+    <div className={`min-h-screen transition-all duration-700 font-mono p-4 md:p-10 ${feverMode ? 'bg-[#1a0505]' : 'bg-[#0a0a0a]'}`}>
       {toast && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 animate-bounce">
-          <div className={`px-6 py-2 border-2 text-[10px] font-bold tracking-[0.3em] uppercase ${
-            feverMode ? 'bg-red-900 border-red-500 text-red-100 shadow-[0_0_20px_red]' : 'bg-zinc-900 border-emerald-500 text-emerald-500'
-          }`}>
-            {toast}
-          </div>
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 px-6 py-2 border-2 bg-black text-[10px] font-bold tracking-widest uppercase border-emerald-500 text-emerald-500">
+          {toast}
         </div>
       )}
 
-      <div className="mx-auto max-w-4xl">
-        {/* DECREE BLOCK */}
-        <div className={`mb-8 overflow-hidden rounded-lg border transition-all duration-500 ${
-          feverMode ? 'border-red-500 bg-red-500/10 shadow-[0_0_20px_rgba(239,68,68,0.3)]' : 'border-amber-500/40 bg-amber-500/5'
-        }`}>
-          <div className={`flex items-center justify-between px-4 py-1 ${feverMode ? 'bg-red-500/20' : 'bg-amber-500/10'}`}>
-            <span className={`text-[9px] font-bold uppercase tracking-[0.3em] ${feverMode ? 'text-red-400' : 'text-amber-500'}`}>
-              {feverMode ? "FEVER MODE ACTIVE" : "Active Decree"}
-            </span>
-            {profile.is_founder && (
-              <button onClick={() => isEditingDecree ? updateDecree() : setIsEditingDecree(true)} className="text-[9px] uppercase hover:opacity-80">
-                {isEditingDecree ? "[SAVE]" : "[EDIT]"}
-              </button>
-            )}
+      <div className="mx-auto max-w-5xl grid gap-6 md:grid-cols-4">
+        {/* SIDEBAR */}
+        <div className="space-y-4 md:col-span-1">
+          <div className="rounded border border-zinc-800 bg-zinc-900/40 p-4">
+            <p className="text-[9px] uppercase text-zinc-500 mb-1">Authenticated_As</p>
+            <p className={`text-xs font-bold ${profile.is_founder ? 'text-amber-400' : 'text-emerald-400'}`}>
+              {profile.email?.split('@')[0].toUpperCase()}
+            </p>
+            <p className="text-[18px] mt-2 text-white font-black">{profile.signal_score?.toLocaleString()}</p>
           </div>
-          <div className="p-4 text-center">
-            {isEditingDecree ? (
-              <textarea value={decree} onChange={(e) => setDecree(e.target.value)} className="w-full bg-transparent border border-zinc-800 p-2 text-sm outline-none" rows={2} />
-            ) : (
-              <p className={`text-sm font-medium italic ${feverMode ? 'text-red-200' : 'text-amber-200'}`}>"{decree}"</p>
-            )}
+
+          <div className="rounded border border-zinc-800 bg-zinc-900/40 p-4">
+            <p className="text-[9px] uppercase text-zinc-500 mb-3 tracking-widest text-center">Hall_of_Power</p>
+            {leaderboard.map((user, i) => (
+              <div key={user.id} className="flex justify-between text-[10px] mb-1">
+                <span className="text-zinc-600">{i+1}.</span>
+                <span className="text-zinc-400 uppercase">{user.email?.split('@')[0]}</span>
+                <span className="text-emerald-500 font-bold">{user.signal_score}</span>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-4">
-          {/* SIDEBAR */}
-          <div className="space-y-4 md:col-span-1">
-            <div className={`rounded-lg border p-4 ${feverMode ? 'border-red-500/50 bg-red-900/20' : 'border-zinc-800 bg-zinc-900/40'}`}>
-              <p className="text-[9px] uppercase text-zinc-500 mb-1">Status</p>
-              <p className={`text-xs font-bold ${feverMode ? 'text-red-400 animate-pulse' : 'text-emerald-400'}`}>
-                {profile.is_founder ? "GENESIS FOUNDER" : "CITIZEN"}
-              </p>
-            </div>
-
-            <div className={`rounded-lg border p-4 ${feverMode ? 'border-red-500/30 bg-red-950/20' : 'border-zinc-800 bg-zinc-900/40'}`}>
-              <p className="text-[9px] uppercase text-zinc-500 mb-3 tracking-widest text-center">Presence_Grid</p>
-              <div className="grid grid-cols-4 gap-2">
-                <div className={`h-8 flex items-center justify-center border rounded ${feverMode ? 'border-red-500 text-red-500 animate-ping' : 'border-amber-500 text-amber-500'}`}>⬢</div>
-                {Array.from({ length: Math.max(0, onlineCount - 1) }).map((_, i) => (
-                  <div key={i} className={`h-8 flex items-center justify-center border rounded animate-pulse ${feverMode ? 'border-red-400/30 text-red-400' : 'border-emerald-500/30 text-emerald-500'}`}>⬡</div>
-                ))}
-              </div>
-            </div>
-
-            <div className={`rounded-lg border p-4 ${feverMode ? 'border-red-500/30 bg-red-950/20' : 'border-zinc-800 bg-zinc-900/40'}`}>
-              <p className="text-[9px] uppercase text-zinc-500 mb-3 tracking-widest text-center">Hall_of_Power</p>
-              <div className="space-y-2">
-                {leaderboard.map((user, index) => (
-                  <div key={user.id} className="flex justify-between items-center text-[10px]">
-                    <span className="text-zinc-600">0{index + 1}.</span>
-                    <span className="truncate max-w-[60px]">{user.email?.split('@')[0].toUpperCase()}</span>
-                    <span className={feverMode ? 'text-red-400' : 'text-emerald-500'}>{user.signal_score}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {profile.is_founder && (
-              <button onClick={toggleFever} className="w-full rounded-lg border border-red-500/50 bg-red-500/10 p-3 text-[10px] uppercase tracking-widest text-red-500 hover:bg-red-500/20">
-                {feverMode ? "End Fever" : "Trigger Fever"}
-              </button>
-            )}
+        {/* SIGNAL WALL */}
+        <div className="md:col-span-3 flex flex-col h-[700px] border border-zinc-800 bg-black/40 rounded-lg overflow-hidden">
+          <div className="p-3 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center">
+            <span className="text-[10px] uppercase tracking-[0.3em] text-zinc-500">Live_Signal_Feed</span>
+            {feverMode && <span className="text-[9px] text-red-500 animate-pulse font-black">FEVER ACTIVE (2X)</span>}
           </div>
 
-          {/* SIGNAL WALL */}
-          <div className={`md:col-span-3 flex flex-col h-[600px] border rounded-lg ${feverMode ? 'border-red-500/40 bg-red-950/10' : 'border-zinc-800 bg-zinc-900/20'}`}>
-            <div className="p-3 border-b border-zinc-800 flex justify-between items-center">
-              <span className="text-[10px] uppercase tracking-widest text-zinc-500">Signal_Wall.log</span>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {messages.map((msg) => (
-                <div key={msg.id} className="group flex items-center justify-between text-xs">
-                  <div>
-                    <span className={`font-bold ${msg.is_founder_msg ? 'text-amber-500' : 'text-emerald-600'}`}>
-                      [{msg.profiles?.email?.split('@')[0]}]:
+          <div className="flex-1 overflow-y-auto p-6 space-y-2">
+            {messages.map((msg) => {
+              const style = getMessageStyle(msg.profiles?.signal_score || 0, msg.is_founder_msg);
+              return (
+                <div key={msg.id} className={`group transition-all rounded ${style.container}`}>
+                  <div className="flex justify-between items-start mb-1">
+                    <span className={style.name}>
+                      {style.badge} // {msg.profiles?.email?.split('@')[0]}
                     </span>
-                    <span className="ml-2 text-zinc-300">{msg.content}</span>
+                    <span className="text-[8px] text-zinc-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {new Date(msg.created_at).toLocaleTimeString()}
+                    </span>
                   </div>
-                  {profile.is_founder && (
-                    <button onClick={() => burnMessage(msg.id)} className="hidden group-hover:block text-[9px] text-red-500 uppercase">[Burn]</button>
-                  )}
+                  <p className={style.content}>{msg.content}</p>
                 </div>
-              ))}
-              <div ref={scrollRef} />
-            </div>
-            <form onSubmit={sendMessage} className="p-3 border-t border-zinc-800 bg-black/40">
-              <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} disabled={isCooldown} placeholder={isCooldown ? "RECHARGING..." : "Broadcast signal..."} className="w-full bg-transparent border-none outline-none text-xs text-emerald-400" />
-            </form>
+              );
+            })}
+            <div ref={scrollRef} />
           </div>
+
+          <form onSubmit={sendMessage} className="p-4 border-t border-zinc-800 bg-zinc-900/20">
+            <input 
+              value={newMessage} 
+              onChange={(e) => setNewMessage(e.target.value)} 
+              disabled={isCooldown}
+              placeholder={isCooldown ? "RECHARGING..." : "INPUT SIGNAL..."} 
+              className="w-full bg-transparent border-none outline-none text-xs text-emerald-400 placeholder:text-zinc-800"
+            />
+          </form>
         </div>
       </div>
     </div>
