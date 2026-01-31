@@ -4,10 +4,10 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 
-// Added last_activity to type
+// Added username to Types
 type District = { slug: string; name: string; min_score: number; description: string; last_activity?: string };
-type Profile = { id: string; email: string | null; signal_score: number | null; is_founder: boolean | null };
-type Message = { id: string; content: string; created_at: string; district_slug: string; is_founder_msg: boolean; profiles?: { email: string, signal_score: number } };
+type Profile = { id: string; email: string | null; username: string | null; signal_score: number | null; is_founder: boolean | null };
+type Message = { id: string; content: string; created_at: string; district_slug: string; is_founder_msg: boolean; profiles?: { username: string, signal_score: number } };
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -28,6 +28,7 @@ export default function DashboardPage() {
   const [globalSubjects, setGlobalSubjects] = useState<string[]>([]); 
   const [showSpawner, setShowSpawner] = useState(false);
   const [newDist, setNewDist] = useState({ name: '', slug: '', min: 0, desc: '' });
+  const [newUsername, setNewUsername] = useState(""); // NEW: Username state
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const triggerToast = (msg: string) => {
@@ -42,7 +43,6 @@ export default function DashboardPage() {
     const { data: pData } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
     if (pData) setProfile(pData as Profile);
 
-    // FETCH DISTRICTS WITH ACTIVITY INTEL
     const { data: dData } = await supabase.from("districts").select("*").order('min_score', { ascending: true });
     if (dData) {
       setDistricts(dData);
@@ -70,7 +70,8 @@ export default function DashboardPage() {
   };
 
   const fetchDistrictMessages = async (slug: string) => {
-    const { data } = await supabase.from("messages").select("*, profiles(email, signal_score)").eq("district_slug", slug).order("created_at", { ascending: true }).limit(100);
+    // UPDATED: Now selecting username
+    const { data } = await supabase.from("messages").select("*, profiles(username, signal_score)").eq("district_slug", slug).order("created_at", { ascending: true }).limit(100);
     if (data) {
       setMessages(data as any);
       extractTrendingTags(data as any);
@@ -91,6 +92,21 @@ export default function DashboardPage() {
     setTrendingTags(Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 5));
   };
 
+  // NEW: Update Identity function
+  const updateIdentity = async () => {
+    if (!newUsername || newUsername.length < 3) return triggerToast("ID TOO SHORT");
+    const { error } = await supabase.from('profiles').update({ username: newUsername }).eq('id', profile?.id);
+    if (error) {
+      if (error.code === '23505') triggerToast("ID ALREADY TAKEN");
+      else triggerToast("SYNC FAILED");
+    } else {
+      triggerToast("IDENTITY ESTABLISHED");
+      setProfile(prev => prev ? { ...prev, username: newUsername } : null);
+      setNewUsername("");
+      loadNexus();
+    }
+  };
+
   useEffect(() => { loadNexus(); }, []);
 
   useEffect(() => {
@@ -98,7 +114,8 @@ export default function DashboardPage() {
     const channel = supabase.channel(`nexus-${activeDistrict.slug}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `district_slug=eq.${activeDistrict.slug}` }, 
         async (payload) => {
-          const { data: uData } = await supabase.from("profiles").select("email, signal_score").eq("id", payload.new.profile_id).single();
+          // UPDATED: Fetching username for real-time
+          const { data: uData } = await supabase.from("profiles").select("username, signal_score").eq("id", payload.new.profile_id).single();
           setMessages((prev) => {
             const next = [...prev, { ...payload.new, profiles: uData } as Message];
             extractTrendingTags(next);
@@ -147,7 +164,6 @@ export default function DashboardPage() {
     }
   };
 
-  // ADDED: COLLAPSE LOGIC
   const purgeInactiveDistricts = async () => {
     if (!profile?.is_founder || !confirm("EXECUTE GLOBAL PURGE OF INACTIVE ROOMS?")) return;
     const { error } = await supabase.rpc('collapse_dead_districts');
@@ -189,6 +205,21 @@ export default function DashboardPage() {
 
       <div className="flex-1 flex overflow-hidden">
         <aside className="w-80 border-r border-zinc-900 bg-zinc-950 p-6 flex flex-col gap-6">
+          
+          {/* NEW: IDENTITY TERMINAL */}
+          <div className="p-4 border border-zinc-800 bg-black/40 rounded">
+            <p className="text-[9px] text-zinc-600 mb-2 font-bold uppercase tracking-widest">Identity_Terminal</p>
+            <div className="flex gap-2">
+              <input 
+                value={newUsername} 
+                onChange={(e) => setNewUsername(e.target.value.toUpperCase())}
+                placeholder={profile.username || "CLAIM_ID"}
+                className="flex-1 bg-black border border-zinc-800 p-2 text-[10px] text-white outline-none focus:border-emerald-500/50"
+              />
+              <button onClick={updateIdentity} className="px-3 bg-zinc-900 text-[10px] hover:bg-emerald-500 hover:text-black transition-all">SYNC</button>
+            </div>
+          </div>
+
           <div className="flex justify-between items-center">
             <p className="text-[10px] font-black tracking-[0.3em] text-zinc-600 uppercase">Districts</p>
             {profile.is_founder && <button onClick={() => setShowSpawner(!showSpawner)} className="text-[10px] text-amber-500 font-bold underline">SPAWN</button>}
@@ -204,7 +235,6 @@ export default function DashboardPage() {
               <input placeholder="slug-name" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, slug: e.target.value})} />
               <input placeholder="Min Signal" type="number" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, min: parseInt(e.target.value)})} />
               <button onClick={spawnDistrict} className="w-full bg-amber-500 text-black py-2 text-[10px] font-black uppercase">Finalize Reality</button>
-              {/* RESTORED PURGE BUTTON */}
               <button onClick={purgeInactiveDistricts} className="w-full bg-red-900/20 text-red-500 border border-red-900/50 py-1 text-[8px] font-black uppercase hover:bg-red-900 hover:text-white transition-all">Collapse Dead Zones</button>
             </div>
           )}
@@ -212,7 +242,6 @@ export default function DashboardPage() {
           <nav className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
             {districts.map((d) => {
               const isLocked = (profile.signal_score || 0) < d.min_score && !profile.is_founder;
-              
               return (
                 <div key={d.slug} className="relative group">
                   <button 
@@ -226,7 +255,6 @@ export default function DashboardPage() {
                         <span className={`text-[11px] font-black uppercase ${isLocked ? 'blur-[2px]' : ''}`}>
                           {isLocked ? "RESTRICTED_AREA" : d.name}
                         </span>
-                        {/* DECAY WARNING LOGIC */}
                         {!isLocked && d.slug !== 'plaza' && (
                            <span className="text-[7px] text-zinc-600 mt-1">LIFESPAN: ACTIVE</span>
                         )}
@@ -234,7 +262,6 @@ export default function DashboardPage() {
                       <span className="text-[8px] text-zinc-800">REQ: {d.min_score}</span>
                     </div>
                   </button>
-                  
                   {profile.is_founder && activeDistrict?.slug !== d.slug && (
                     <button 
                       onClick={(e) => { e.stopPropagation(); deleteDistrict(d.slug); }}
@@ -242,11 +269,6 @@ export default function DashboardPage() {
                     >
                       ERASE
                     </button>
-                  )}
-                  {isLocked && (
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <span className="text-[7px] text-red-600 font-black tracking-widest bg-black px-1">LOCKED</span>
-                    </div>
                   )}
                 </div>
               );
@@ -265,7 +287,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="p-5 border-t border-zinc-900 bg-black/40">
-            <p className="text-[9px] text-zinc-600 mb-1 font-bold">SIGNAL_SCORE</p>
+            <p className="text-[9px] text-zinc-600 mb-1 font-bold uppercase">{profile.username || 'CITIZEN'}_SIGNAL</p>
             <p className="text-3xl font-black text-white tracking-tighter">{profile.signal_score?.toLocaleString()}</p>
             {profile.is_founder && (
               <button onClick={toggleFever} className={`w-full mt-4 p-2 text-[9px] font-black border transition-all ${feverMode ? 'bg-red-600 border-red-500 text-white' : 'border-red-900/50 text-red-900 hover:text-red-600 hover:border-red-600'}`}>FEVER_TOGGLE</button>
@@ -279,7 +301,7 @@ export default function DashboardPage() {
               <span className="text-[10px] text-zinc-700 uppercase tracking-widest font-bold">Stream //</span>
               <span className="text-sm font-black uppercase text-white tracking-widest">{activeDistrict?.name}</span>
             </div>
-            <div className="flex items-center gap-3 bg-zinc-900/50 border border-zinc-800 px-4 py-1.5 rounded-full transition-all focus-within:border-emerald-500/50">
+            <div className="flex items-center gap-3 bg-zinc-900/50 border border-zinc-800 px-4 py-1.5 rounded-full">
               <span className="text-[9px] text-emerald-500 font-black">TUNER:</span>
               <input value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} placeholder="Search signal..." className="bg-transparent outline-none text-[10px] text-zinc-200 w-32" />
             </div>
@@ -289,8 +311,10 @@ export default function DashboardPage() {
             {messages.filter(m => m.content.toLowerCase().includes(filterQuery.toLowerCase())).map((msg) => (
               <div key={msg.id} className={`group border-l-2 py-2 px-5 transition-all ${msg.is_founder_msg ? 'border-amber-500 bg-amber-500/5' : 'border-zinc-800 hover:border-zinc-700'}`}>
                 <div className="flex gap-4 items-center mb-1">
-                  <span className={`text-[9px] font-black tracking-widest ${msg.is_founder_msg ? 'text-amber-500' : 'text-zinc-500'}`}>
-                    {msg.is_founder_msg ? 'GENESIS' : 'CITIZEN'} // {msg.profiles?.email?.split('@')[0].toUpperCase()}
+                  {/* UPDATED: Displays username & Founder Glow */}
+                  <span className={`text-[9px] font-black tracking-widest 
+                    ${msg.is_founder_msg ? 'text-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.3)]' : 'text-zinc-500'}`}>
+                    {msg.is_founder_msg ? 'GENESIS' : 'CITIZEN'} // {msg.profiles?.username || 'ANONYMOUS'}
                   </span>
                 </div>
                 <p className={`text-sm leading-relaxed ${msg.is_founder_msg ? 'text-amber-100' : 'text-zinc-300'}`}>
@@ -309,7 +333,7 @@ export default function DashboardPage() {
         </main>
       </div>
       {toast && (
-        <div className="fixed bottom-24 right-10 bg-emerald-500 text-black px-4 py-2 text-[10px] font-black animate-bounce shadow-[0_0_20px_rgba(16,185,129,0.5)]">
+        <div className="fixed bottom-24 right-10 bg-emerald-500 text-black px-4 py-2 text-[10px] font-black animate-bounce">
           {toast}
         </div>
       )}
