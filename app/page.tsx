@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
@@ -54,6 +55,7 @@ function playTerminalSound() {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [displayedLines, setDisplayedLines] = useState<string[]>([]);
   const [currentLine, setCurrentLine] = useState("");
   const [lineIndex, setLineIndex] = useState(0);
@@ -80,6 +82,18 @@ export default function Home() {
     const status = localStorage.getItem("founder_status");
     setFounderMode(status === "true");
   }, []);
+
+  useEffect(() => {
+    const checkSession = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (session?.user) {
+        router.replace("/dashboard");
+      }
+    };
+    checkSession();
+  }, [router]);
 
   const activateFounderMode = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -192,6 +206,7 @@ export default function Home() {
           );
         }
         setSignUpSuccess(true);
+        router.push("/dashboard");
       } catch (err) {
         setSignUpError(
           err instanceof Error ? err.message : "Sign up failed. Try again."
@@ -200,7 +215,7 @@ export default function Home() {
         setSignUpLoading(false);
       }
     },
-    [signUpEmail, signUpPassword, getSignalScore]
+    [signUpEmail, signUpPassword, getSignalScore, router]
   );
 
   return (
