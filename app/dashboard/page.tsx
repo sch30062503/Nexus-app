@@ -135,6 +135,16 @@ export default function DashboardPage() {
     }
   };
 
+  const deleteDistrict = async (slug: string) => {
+    if (!profile?.is_founder || !confirm("ERASE THIS REALITY?")) return;
+    const { error } = await supabase.from('districts').delete().eq('slug', slug);
+    if (error) triggerToast("ERASURE FAILED");
+    else {
+      triggerToast("REALITY TERMINATED");
+      loadNexus();
+    }
+  };
+
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !profile || isCooldown || !activeDistrict) return;
@@ -186,28 +196,37 @@ export default function DashboardPage() {
 
           <nav className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
             {districts.map((d) => {
-              // GATEKEEPER LOGIC: Locked if score too low, unless Founder
               const isLocked = (profile.signal_score || 0) < d.min_score && !profile.is_founder;
-              
               return (
-                <button key={d.slug} 
-                  disabled={isLocked}
-                  onClick={() => { setActiveDistrict(d); fetchDistrictMessages(d.slug); setFilterQuery(""); }} 
-                  className={`w-full text-left p-4 border transition-all rounded relative group
-                    ${activeDistrict?.slug === d.slug ? 'border-emerald-500 bg-emerald-500/5' : 'border-zinc-900'}
-                    ${isLocked ? 'opacity-30 cursor-not-allowed grayscale' : 'hover:border-zinc-700 opacity-100'}`}>
-                  <div className="flex justify-between items-center">
-                    <span className={`text-[11px] font-black uppercase ${isLocked ? 'blur-[2px]' : ''}`}>
-                      {isLocked ? "RESTRICTED_AREA" : d.name}
-                    </span>
-                    <span className="text-[8px] text-zinc-800">REQ: {d.min_score}</span>
-                  </div>
+                <div key={d.slug} className="relative group">
+                  <button 
+                    disabled={isLocked}
+                    onClick={() => { setActiveDistrict(d); fetchDistrictMessages(d.slug); setFilterQuery(""); }} 
+                    className={`w-full text-left p-4 border transition-all rounded relative
+                      ${activeDistrict?.slug === d.slug ? 'border-emerald-500 bg-emerald-500/5' : 'border-zinc-900'}
+                      ${isLocked ? 'opacity-30 cursor-not-allowed grayscale' : 'hover:border-zinc-700 opacity-100'}`}>
+                    <div className="flex justify-between items-center">
+                      <span className={`text-[11px] font-black uppercase ${isLocked ? 'blur-[2px]' : ''}`}>
+                        {isLocked ? "RESTRICTED_AREA" : d.name}
+                      </span>
+                      <span className="text-[8px] text-zinc-800">REQ: {d.min_score}</span>
+                    </div>
+                  </button>
+                  {/* RESTORED: FOUNDER DELETE BUTTON */}
+                  {profile.is_founder && activeDistrict?.slug !== d.slug && (
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); deleteDistrict(d.slug); }}
+                      className="absolute -right-1 -top-1 bg-red-900 text-white text-[7px] px-1 opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all z-10"
+                    >
+                      ERASE
+                    </button>
+                  )}
                   {isLocked && (
-                    <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                       <span className="text-[7px] text-red-600 font-black tracking-widest bg-black px-1">LOCKED</span>
                     </div>
                   )}
-                </button>
+                </div>
               );
             })}
           </nav>
@@ -219,16 +238,6 @@ export default function DashboardPage() {
                 <button key={tag} onClick={() => setFilterQuery(tag)} className="text-[10px] bg-zinc-900 px-2 py-1 rounded text-emerald-500 hover:bg-emerald-500 hover:text-black transition-all">
                   {tag}
                 </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="p-4 border border-zinc-800 bg-zinc-900/20 rounded">
-            <p className="text-[9px] text-zinc-500 mb-3 uppercase text-center font-bold">Presence_Grid</p>
-            <div className="flex flex-wrap justify-center gap-2">
-              <div className={`h-4 w-4 border border-amber-500 text-amber-500 flex items-center justify-center text-[8px] ${feverMode ? 'animate-ping' : ''}`}>⬢</div>
-              {Array.from({ length: Math.max(0, onlineCount - 1) }).map((_, i) => (
-                <div key={i} className="h-4 w-4 border border-emerald-500/30 text-emerald-500/50 flex items-center justify-center text-[8px] animate-pulse">⬡</div>
               ))}
             </div>
           </div>
@@ -248,11 +257,9 @@ export default function DashboardPage() {
               <span className="text-[10px] text-zinc-700 uppercase tracking-widest font-bold">Stream //</span>
               <span className="text-sm font-black uppercase text-white tracking-widest">{activeDistrict?.name}</span>
             </div>
-
             <div className="flex items-center gap-3 bg-zinc-900/50 border border-zinc-800 px-4 py-1.5 rounded-full transition-all focus-within:border-emerald-500/50">
               <span className="text-[9px] text-emerald-500 font-black">TUNER:</span>
               <input value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} placeholder="Search signal..." className="bg-transparent outline-none text-[10px] text-zinc-200 w-32" />
-              {filterQuery && <button onClick={() => setFilterQuery("")} className="text-[9px] text-zinc-500 hover:text-white">×</button>}
             </div>
           </header>
 
