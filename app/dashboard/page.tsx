@@ -24,7 +24,7 @@ export default function DashboardPage() {
   const [isEditingDecree, setIsEditingDecree] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [trendingTags, setTrendingTags] = useState<string[]>([]);
-  const [globalSubjects, setGlobalSubjects] = useState<string[]>([]); // DATA FOR NEW DISTRICTS
+  const [globalSubjects, setGlobalSubjects] = useState<string[]>([]); 
   const [showSpawner, setShowSpawner] = useState(false);
   const [newDist, setNewDist] = useState({ name: '', slug: '', min: 0, desc: '' });
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -52,13 +52,15 @@ export default function DashboardPage() {
     const { data: decreeData } = await supabase.from("decrees").select("content").eq("id", 1).single();
     if (decreeData) setDecree(decreeData.content);
     
-    // FETCH GLOBAL INTEL FOR SPAWNING
+    // FIXED: Typed 'tag' as string to satisfy Vercel compiler
     const { data: allMsgs } = await supabase.from("messages").select("content").limit(200);
     if (allMsgs) {
       const counts: Record<string, number> = {};
       allMsgs.forEach(m => {
         const tags = m.content.match(/#\w+/g);
-        tags?.forEach(tag => { counts[tag] = (counts[tag] || 0) + 1; });
+        if (tags) {
+          tags.forEach((tag: string) => { counts[tag] = (counts[tag] || 0) + 1; });
+        }
       });
       setGlobalSubjects(Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 5));
     }
@@ -74,14 +76,17 @@ export default function DashboardPage() {
     }
   };
 
+  // FIXED: Explicitly typed 'tag' here as well
   const extractTrendingTags = (msgs: Message[]) => {
     const counts: Record<string, number> = {};
     msgs.forEach(m => {
       const tags = m.content.match(/#\w+/g);
-      tags?.forEach(tag => {
-        const t = tag.toLowerCase();
-        counts[t] = (counts[t] || 0) + 1;
-      });
+      if (tags) {
+        tags.forEach((tag: string) => {
+          const t = tag.toLowerCase();
+          counts[t] = (counts[t] || 0) + 1;
+        });
+      }
     });
     setTrendingTags(Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 5));
   };
@@ -105,7 +110,7 @@ export default function DashboardPage() {
 
     const presenceChannel = supabase.channel('online-users');
     presenceChannel.on('presence', { event: 'sync' }, () => setOnlineCount(Object.keys(presenceChannel.presenceState()).length)).subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') await presenceChannel.track({ user_id: profile.id, online_at: new Date().toISOString() });
+      if (status === 'SUBSCRIBED' && profile) await presenceChannel.track({ user_id: profile.id, online_at: new Date().toISOString() });
     });
 
     return () => { supabase.removeChannel(channel); supabase.removeChannel(feverChannel); supabase.removeChannel(presenceChannel); };
@@ -149,7 +154,6 @@ export default function DashboardPage() {
   return (
     <div className={`min-h-screen flex flex-col font-mono transition-colors duration-1000 ${feverMode ? 'bg-[#1a0505]' : 'bg-[#050505]'} text-zinc-400 overflow-hidden`}>
       
-      {/* DECREE BAR */}
       <div className={`w-full py-2 px-4 border-b flex justify-between items-center ${feverMode ? 'bg-red-500/10 border-red-500' : 'bg-amber-500/5 border-amber-500/30'}`}>
         <div className="flex items-center gap-3">
           <span className="text-[10px] text-amber-500 font-black uppercase tracking-widest">Genesis_Decree:</span>
@@ -163,14 +167,12 @@ export default function DashboardPage() {
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* SIDEBAR */}
         <aside className="w-80 border-r border-zinc-900 bg-zinc-950 p-6 flex flex-col gap-6">
           <div className="flex justify-between items-center">
             <p className="text-[10px] font-black tracking-[0.3em] text-zinc-600 uppercase">Districts</p>
             {profile.is_founder && <button onClick={() => setShowSpawner(!showSpawner)} className="text-[10px] text-amber-500 font-bold underline">SPAWN</button>}
           </div>
 
-          {/* SPAWNER INTEL PANEL */}
           {showSpawner && (
             <div className="p-4 border border-amber-500/30 bg-amber-500/5 rounded space-y-3">
               <p className="text-[8px] text-amber-500/60 font-black uppercase">Global_Signal_Intel:</p>
@@ -196,7 +198,6 @@ export default function DashboardPage() {
             ))}
           </nav>
 
-          {/* LIVE FREQUENCIES (Local to District) */}
           <div className="p-4 border border-zinc-900 bg-black/40 rounded">
             <p className="text-[9px] text-zinc-600 mb-3 uppercase font-bold tracking-[0.2em]">Live_Frequencies</p>
             <div className="flex flex-wrap gap-2">
@@ -208,7 +209,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* PRESENCE GRID */}
           <div className="p-4 border border-zinc-800 bg-zinc-900/20 rounded">
             <p className="text-[9px] text-zinc-500 mb-3 uppercase text-center font-bold">Presence_Grid</p>
             <div className="flex flex-wrap justify-center gap-2">
@@ -228,7 +228,6 @@ export default function DashboardPage() {
           </div>
         </aside>
 
-        {/* MAIN FEED */}
         <main className="flex-1 flex flex-col relative bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
           <header className="p-6 border-b border-zinc-900 bg-black/95 flex justify-between items-center backdrop-blur-xl z-20">
             <div className="flex items-center gap-4">
@@ -266,6 +265,11 @@ export default function DashboardPage() {
           </form>
         </main>
       </div>
+      {toast && (
+        <div className="fixed bottom-24 right-10 bg-emerald-500 text-black px-4 py-2 text-[10px] font-black animate-bounce shadow-[0_0_20px_rgba(16,185,129,0.5)]">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
