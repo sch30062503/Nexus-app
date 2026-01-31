@@ -30,6 +30,7 @@ export default function DashboardPage() {
   const [isEditingDecree, setIsEditingDecree] = useState(false);
   const [onlineCount, setOnlineCount] = useState(1);
   const [isCooldown, setIsCooldown] = useState(false);
+  const [feverMode, setFeverMode] = useState(false); // NEW: Fever State
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -53,6 +54,13 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!profile) return;
+
+    // FEVER BROADCAST CHANNEL
+    const feverChannel = supabase.channel('global-events')
+      .on('broadcast', { event: 'FEVER_TOGGLE' }, (payload) => {
+        setFeverMode(payload.payload.active);
+      })
+      .subscribe();
 
     const decreeChannel = supabase.channel("decree-updates")
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "decrees" }, 
@@ -81,6 +89,7 @@ export default function DashboardPage() {
       });
 
     return () => {
+      supabase.removeChannel(feverChannel);
       supabase.removeChannel(decreeChannel);
       supabase.removeChannel(msgChannel);
       supabase.removeChannel(presenceChannel);
@@ -90,6 +99,17 @@ export default function DashboardPage() {
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // NEW: Founder Trigger for Fever Mode
+  const toggleFever = () => {
+    const newState = !feverMode;
+    setFeverMode(newState);
+    supabase.channel('global-events').send({
+      type: 'broadcast',
+      event: 'FEVER_TOGGLE',
+      payload: { active: newState },
+    });
+  };
 
   const updateDecree = async () => {
     await supabase.from("decrees").update({ content: decree }).eq("id", 1);
@@ -112,7 +132,11 @@ export default function DashboardPage() {
     });
 
     if (!error) {
-      const gainAmount = profile.is_founder ? 0 : 5;
+      // FEVER LOGIC: Gain is doubled during Fever Mode
+      const baseGain = 5;
+      const multiplier = feverMode ? 2 : 1;
+      const gainAmount = profile.is_founder ? 0 : baseGain * multiplier;
+      
       if (gainAmount > 0) {
         await supabase.rpc('increment_signal_score', { user_id: profile.id, amount: gainAmount });
         setProfile(prev => prev ? { ...prev, signal_score: (prev.signal_score || 0) + gainAmount } : null);
@@ -126,64 +150,86 @@ export default function DashboardPage() {
   if (loading || !profile) return <div className="p-10 font-mono text-emerald-500 animate-pulse">Establishing Uplink...</div>;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] p-4 font-mono text-zinc-300 md:p-10">
+    <div className={`min-h-screen transition-all duration-700 font-mono p-4 md:p-10 ${
+      feverMode ? 'bg-[#1a0505] text-red-100' : 'bg-[#0a0a0a] text-zinc-300'
+    }`}>
       <div className="mx-auto max-w-3xl">
         
         {/* DECREE */}
-        <div className="mb-8 overflow-hidden rounded-lg border border-amber-500/40 bg-amber-500/5 shadow-[0_0_15px_rgba(245,158,11,0.1)]">
-          <div className="flex items-center justify-between bg-amber-500/10 px-4 py-1">
-            <span className="text-[9px] font-bold uppercase tracking-[0.3em] text-amber-500">Active Decree</span>
+        <div className={`mb-8 overflow-hidden rounded-lg border transition-all duration-500 ${
+          feverMode ? 'border-red-500 bg-red-500/10 shadow-[0_0_20px_rgba(239,68,68,0.3)]' : 'border-amber-500/40 bg-amber-500/5'
+        }`}>
+          <div className={`flex items-center justify-between px-4 py-1 ${feverMode ? 'bg-red-500/20' : 'bg-amber-500/10'}`}>
+            <span className={`text-[9px] font-bold uppercase tracking-[0.3em] ${feverMode ? 'text-red-400' : 'text-amber-500'}`}>
+              {feverMode ? "FEVER MODE ACTIVE" : "Active Decree"}
+            </span>
             {profile.is_founder && (
-              <button onClick={() => isEditingDecree ? updateDecree() : setIsEditingDecree(true)} className="text-[9px] uppercase text-amber-500/70 hover:text-amber-500">
-                {isEditingDecree ? "[SAVE_CHANGES]" : "[EDIT_DECREE]"}
+              <button onClick={() => isEditingDecree ? updateDecree() : setIsEditingDecree(true)} className="text-[9px] uppercase hover:opacity-80">
+                {isEditingDecree ? "[SAVE]" : "[EDIT]"}
               </button>
             )}
           </div>
           <div className="p-4 text-center">
             {isEditingDecree ? (
-              <textarea value={decree} onChange={(e) => setDecree(e.target.value)} className="w-full bg-transparent border border-amber-500/30 p-2 text-sm text-amber-200 outline-none" rows={2} />
+              <textarea value={decree} onChange={(e) => setDecree(e.target.value)} className="w-full bg-transparent border border-zinc-800 p-2 text-sm outline-none" rows={2} />
             ) : (
-              <p className="text-sm font-medium italic tracking-wide text-amber-200">"{decree}"</p>
+              <p className={`text-sm font-medium italic ${feverMode ? 'text-red-200' : 'text-amber-200'}`}>"{decree}"</p>
             )}
           </div>
         </div>
 
         <div className="grid gap-6 md:grid-cols-3">
           <div className="space-y-4">
-            <div className={`rounded-lg border p-4 ${profile.is_founder ? 'border-amber-500/50 bg-amber-500/5' : 'border-zinc-800 bg-zinc-900/40'}`}>
+            <div className={`rounded-lg border p-4 transition-colors ${
+              feverMode ? 'border-red-500/50 bg-red-900/20' : profile.is_founder ? 'border-amber-500/50 bg-amber-500/5' : 'border-zinc-800 bg-zinc-900/40'
+            }`}>
               <p className="text-[9px] uppercase text-zinc-500 mb-1">Status</p>
-              <p className={`text-xs font-bold ${profile.is_founder ? 'text-amber-400' : 'text-emerald-400'}`}>
+              <p className={`text-xs font-bold ${feverMode ? 'text-red-400 animate-pulse' : profile.is_founder ? 'text-amber-400' : 'text-emerald-400'}`}>
                 {profile.is_founder ? "GENESIS FOUNDER" : "CITIZEN"}
               </p>
             </div>
-            <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
+            
+            <div className={`rounded-lg border p-4 ${feverMode ? 'border-red-500/30 bg-red-900/10' : 'border-zinc-800 bg-zinc-900/40'}`}>
               <p className="text-[9px] uppercase text-zinc-500 mb-1">Signal Score</p>
-              <p className="text-xl text-emerald-400">{profile.signal_score?.toLocaleString()}</p>
+              <p className={`text-xl ${feverMode ? 'text-red-400' : 'text-emerald-400'}`}>{profile.signal_score?.toLocaleString()}</p>
             </div>
-            <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 flex items-center justify-between">
+
+            {/* FOUNDER TOOLS: FEVER TOGGLE */}
+            {profile.is_founder && (
+              <button 
+                onClick={toggleFever}
+                className={`w-full rounded-lg border p-3 text-[10px] uppercase tracking-widest transition-all ${
+                  feverMode ? 'border-zinc-700 bg-zinc-800 text-zinc-400' : 'border-red-500/50 bg-red-500/10 text-red-500 hover:bg-red-500/20'
+                }`}
+              >
+                {feverMode ? "End Fever Mode" : "Trigger Fever Mode"}
+              </button>
+            )}
+
+            <div className={`rounded-lg border p-4 flex items-center justify-between ${feverMode ? 'border-red-500/30' : 'border-zinc-800'}`}>
               <p className="text-[9px] uppercase text-zinc-500">Active Nodes</p>
-              <div className="flex items-center gap-2">
-                <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-                <span className="text-sm text-emerald-500 font-bold">{onlineCount}</span>
-              </div>
+              <span className={`text-sm font-bold ${feverMode ? 'text-red-400' : 'text-emerald-500'}`}>{onlineCount}</span>
             </div>
           </div>
 
-          <div className="md:col-span-2 flex flex-col h-[450px] border border-zinc-800 rounded-lg bg-zinc-900/20">
-            <div className="p-3 border-b border-zinc-800 bg-zinc-900/40">
-              <span className="text-[10px] uppercase tracking-widest text-zinc-500">Signal_Wall.log</span>
+          <div className={`md:col-span-2 flex flex-col h-[450px] border rounded-lg transition-colors ${
+            feverMode ? 'border-red-500/40 bg-red-950/10' : 'border-zinc-800 bg-zinc-900/20'
+          }`}>
+            <div className={`p-3 border-b flex justify-between items-center ${feverMode ? 'border-red-500/40 bg-red-900/20' : 'border-zinc-800 bg-zinc-900/40'}`}>
+              <span className={`text-[10px] uppercase tracking-widest ${feverMode ? 'text-red-400' : 'text-zinc-500'}`}>Signal_Wall.log</span>
+              {feverMode && <span className="text-[9px] text-red-500 animate-ping font-bold">2X SIGNAL ACTIVE</span>}
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {messages.map((msg) => (
                 <div key={msg.id} className="group flex items-center justify-between text-xs">
                   <div>
-                    <span className={`font-bold ${msg.is_founder_msg ? 'text-amber-500' : 'text-emerald-600'}`}>
+                    <span className={`font-bold ${feverMode ? 'text-red-400' : msg.is_founder_msg ? 'text-amber-500' : 'text-emerald-600'}`}>
                       [{msg.profiles?.email?.split('@')[0] || 'Unknown'}]:
                     </span>
-                    <span className="ml-2 text-zinc-300">{msg.content}</span>
+                    <span className={`ml-2 ${feverMode ? 'text-red-100' : 'text-zinc-300'}`}>{msg.content}</span>
                   </div>
                   {profile.is_founder && (
-                    <button onClick={() => burnMessage(msg.id)} className="hidden group-hover:block text-[9px] text-red-500/50 hover:text-red-500 uppercase tracking-tighter">
+                    <button onClick={() => burnMessage(msg.id)} className="hidden group-hover:block text-[9px] text-red-500 hover:scale-110 transition-transform uppercase">
                       [Burn]
                     </button>
                   )}
@@ -191,14 +237,14 @@ export default function DashboardPage() {
               ))}
               <div ref={scrollRef} />
             </div>
-            <form onSubmit={sendMessage} className="p-3 border-t border-zinc-800 bg-zinc-900/40">
+            <form onSubmit={sendMessage} className={`p-3 border-t transition-colors ${feverMode ? 'border-red-500/40 bg-red-900/20' : 'border-zinc-800 bg-zinc-900/40'}`}>
               <input 
                 value={newMessage} 
                 onChange={(e) => setNewMessage(e.target.value)} 
                 disabled={isCooldown}
-                placeholder={isCooldown ? "RECHARGING SIGNAL..." : "Broadcast a signal..."} 
-                className={`w-full bg-transparent border-none outline-none text-xs transition-colors ${
-                  isCooldown ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-400'
+                placeholder={isCooldown ? "RECHARGING..." : "Broadcast a signal..."} 
+                className={`w-full bg-transparent border-none outline-none text-xs ${
+                  feverMode ? 'text-red-200 placeholder:text-red-900' : 'text-emerald-400 placeholder:text-zinc-700'
                 }`} 
               />
             </form>
