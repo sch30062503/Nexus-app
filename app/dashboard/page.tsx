@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 
-type District = { slug: string; name: string; min_score: number; description: string };
+// Added last_activity to type
+type District = { slug: string; name: string; min_score: number; description: string; last_activity?: string };
 type Profile = { id: string; email: string | null; signal_score: number | null; is_founder: boolean | null };
 type Message = { id: string; content: string; created_at: string; district_slug: string; is_founder_msg: boolean; profiles?: { email: string, signal_score: number } };
 
@@ -41,6 +42,7 @@ export default function DashboardPage() {
     const { data: pData } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
     if (pData) setProfile(pData as Profile);
 
+    // FETCH DISTRICTS WITH ACTIVITY INTEL
     const { data: dData } = await supabase.from("districts").select("*").order('min_score', { ascending: true });
     if (dData) {
       setDistricts(dData);
@@ -145,6 +147,17 @@ export default function DashboardPage() {
     }
   };
 
+  // ADDED: COLLAPSE LOGIC
+  const purgeInactiveDistricts = async () => {
+    if (!profile?.is_founder || !confirm("EXECUTE GLOBAL PURGE OF INACTIVE ROOMS?")) return;
+    const { error } = await supabase.rpc('collapse_dead_districts');
+    if (error) triggerToast("PURGE FAILED");
+    else {
+      triggerToast("INACTIVE REALITIES COLLAPSED");
+      loadNexus();
+    }
+  };
+
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !profile || isCooldown || !activeDistrict) return;
@@ -191,12 +204,15 @@ export default function DashboardPage() {
               <input placeholder="slug-name" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, slug: e.target.value})} />
               <input placeholder="Min Signal" type="number" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, min: parseInt(e.target.value)})} />
               <button onClick={spawnDistrict} className="w-full bg-amber-500 text-black py-2 text-[10px] font-black uppercase">Finalize Reality</button>
+              {/* RESTORED PURGE BUTTON */}
+              <button onClick={purgeInactiveDistricts} className="w-full bg-red-900/20 text-red-500 border border-red-900/50 py-1 text-[8px] font-black uppercase hover:bg-red-900 hover:text-white transition-all">Collapse Dead Zones</button>
             </div>
           )}
 
           <nav className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
             {districts.map((d) => {
               const isLocked = (profile.signal_score || 0) < d.min_score && !profile.is_founder;
+              
               return (
                 <div key={d.slug} className="relative group">
                   <button 
@@ -206,13 +222,19 @@ export default function DashboardPage() {
                       ${activeDistrict?.slug === d.slug ? 'border-emerald-500 bg-emerald-500/5' : 'border-zinc-900'}
                       ${isLocked ? 'opacity-30 cursor-not-allowed grayscale' : 'hover:border-zinc-700 opacity-100'}`}>
                     <div className="flex justify-between items-center">
-                      <span className={`text-[11px] font-black uppercase ${isLocked ? 'blur-[2px]' : ''}`}>
-                        {isLocked ? "RESTRICTED_AREA" : d.name}
-                      </span>
+                      <div className="flex flex-col">
+                        <span className={`text-[11px] font-black uppercase ${isLocked ? 'blur-[2px]' : ''}`}>
+                          {isLocked ? "RESTRICTED_AREA" : d.name}
+                        </span>
+                        {/* DECAY WARNING LOGIC */}
+                        {!isLocked && d.slug !== 'plaza' && (
+                           <span className="text-[7px] text-zinc-600 mt-1">LIFESPAN: ACTIVE</span>
+                        )}
+                      </div>
                       <span className="text-[8px] text-zinc-800">REQ: {d.min_score}</span>
                     </div>
                   </button>
-                  {/* RESTORED: FOUNDER DELETE BUTTON */}
+                  
                   {profile.is_founder && activeDistrict?.slug !== d.slug && (
                     <button 
                       onClick={(e) => { e.stopPropagation(); deleteDistrict(d.slug); }}
