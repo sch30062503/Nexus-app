@@ -79,10 +79,11 @@ export default function DashboardPage() {
         }
       });
 
-    return () => {
-      supabase.removeChannels([feverChannel, msgChannel, presenceChannel]);
-    };
-  }, [profile]);
+      return () => {
+        supabase.removeChannel(feverChannel);
+        supabase.removeChannel(msgChannel);
+        supabase.removeChannel(presenceChannel);
+      };
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
