@@ -24,7 +24,6 @@ export default function DashboardPage() {
   const [toast, setToast] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Spawner State
   const [showSpawner, setShowSpawner] = useState(false);
   const [newDist, setNewDist] = useState({ name: '', slug: '', min: 0, desc: '' });
 
@@ -43,9 +42,11 @@ export default function DashboardPage() {
     const { data: dData } = await supabase.from("districts").select("*").order('min_score', { ascending: true });
     if (dData) {
       setDistricts(dData);
-      const startDist = activeDistrict || dData[0];
-      setActiveDistrict(startDist);
-      fetchDistrictMessages(startDist.slug);
+      // Ensure we don't lose the active district on refresh if it still exists
+      const current = activeDistrict ? dData.find(d => d.slug === activeDistrict.slug) : dData[0];
+      const target = current || dData[0];
+      setActiveDistrict(target);
+      fetchDistrictMessages(target.slug);
     }
 
     const { data: decreeData } = await supabase.from("decrees").select("content").eq("id", 1).single();
@@ -65,7 +66,6 @@ export default function DashboardPage() {
 
   useEffect(() => { loadNexus(); }, []);
 
-  // Listen for NEW messages in the ACTIVE district only
   useEffect(() => {
     if (!activeDistrict || !profile) return;
     
@@ -121,6 +121,16 @@ export default function DashboardPage() {
     }
   };
 
+  const collapseDistrict = async (slug: string) => {
+    if (slug === 'plaza') return triggerToast("THE PLAZA CANNOT BE COLLAPSED");
+    const { error } = await supabase.from('districts').delete().eq('slug', slug);
+    if (!error) {
+      triggerToast("REALITY COLLAPSED");
+      if (activeDistrict?.slug === slug) setActiveDistrict(districts.find(d => d.slug === 'plaza') || null);
+      loadNexus();
+    }
+  };
+
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !profile || isCooldown || !activeDistrict) return;
@@ -144,7 +154,6 @@ export default function DashboardPage() {
   return (
     <div className={`min-h-screen flex flex-col font-mono transition-colors duration-1000 ${feverMode ? 'bg-[#1a0505]' : 'bg-[#050505]'} text-zinc-400 overflow-hidden`}>
       
-      {/* RESTORED: DECREE BAR */}
       <div className={`w-full py-2 px-4 border-b flex justify-between items-center ${feverMode ? 'bg-red-500/10 border-red-500' : 'bg-amber-500/5 border-amber-500/30'}`}>
         <div className="flex items-center gap-3">
           <span className="text-[10px] text-amber-500 font-black uppercase">Genesis_Decree:</span>
@@ -158,7 +167,6 @@ export default function DashboardPage() {
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* SIDEBAR */}
         <aside className="w-80 border-r border-zinc-900 bg-zinc-950 p-6 flex flex-col gap-6">
           <div className="flex justify-between items-center">
             <p className="text-[10px] font-black tracking-[0.3em] text-zinc-600 uppercase">Districts</p>
@@ -168,7 +176,7 @@ export default function DashboardPage() {
           {showSpawner && (
             <div className="p-4 border border-amber-500/30 bg-amber-500/5 rounded space-y-2">
               <input placeholder="Name" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, name: e.target.value})} />
-              <input placeholder="Slug (lowercase)" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, slug: e.target.value})} />
+              <input placeholder="Slug" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, slug: e.target.value})} />
               <input placeholder="Min Signal" type="number" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, min: parseInt(e.target.value)})} />
               <button onClick={spawnDistrict} className="w-full bg-amber-500 text-black py-2 text-[10px] font-black uppercase">Finalize</button>
             </div>
@@ -176,26 +184,36 @@ export default function DashboardPage() {
 
           <nav className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
             {districts.map((d) => (
-              <button key={d.slug} onClick={() => {
-                if (!profile.is_founder && (profile.signal_score || 0) < d.min_score) return triggerToast(`LOCKED: NEED ${d.min_score} SIGNAL`);
-                setActiveDistrict(d);
-                fetchDistrictMessages(d.slug);
-              }} className={`w-full text-left p-4 border transition-all rounded ${activeDistrict?.slug === d.slug ? 'border-emerald-500 bg-emerald-500/5' : 'border-zinc-900 opacity-60 hover:opacity-100 hover:border-zinc-700'}`}>
-                <div className="flex justify-between items-center mb-1">
-                  <span className={`text-[11px] font-black uppercase ${activeDistrict?.slug === d.slug ? 'text-white' : 'text-zinc-500'}`}>{d.name}</span>
-                  <span className="text-[9px] text-zinc-700">SIG: {d.min_score}</span>
-                </div>
-              </button>
+              <div key={d.slug} className="group relative">
+                <button onClick={() => {
+                  if (!profile.is_founder && (profile.signal_score || 0) < d.min_score) return triggerToast(`LOCKED: NEED ${d.min_score} SIGNAL`);
+                  setActiveDistrict(d);
+                  fetchDistrictMessages(d.slug);
+                }} className={`w-full text-left p-4 border transition-all rounded ${activeDistrict?.slug === d.slug ? 'border-emerald-500 bg-emerald-500/5' : 'border-zinc-900 opacity-60 hover:opacity-100 hover:border-zinc-700'}`}>
+                  <div className="flex justify-between items-center">
+                    <span className={`text-[11px] font-black uppercase ${activeDistrict?.slug === d.slug ? 'text-white' : 'text-zinc-500'}`}>{d.name}</span>
+                    <span className="text-[9px] text-zinc-700">SIG: {d.min_score}</span>
+                  </div>
+                </button>
+                
+                {profile.is_founder && d.slug !== 'plaza' && (
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); collapseDistrict(d.slug); }}
+                    className="absolute -right-1 -top-1 opacity-0 group-hover:opacity-100 bg-red-600 text-white text-[7px] font-black px-1 rounded z-10 hover:bg-red-500"
+                  >
+                    COLLAPSE
+                  </button>
+                )}
+              </div>
             ))}
           </nav>
 
-          {/* RESTORED: PRESENCE NODE */}
-          <div className="p-4 border border-zinc-800 bg-zinc-900/20 rounded">
-            <p className="text-[9px] text-zinc-500 mb-3 uppercase tracking-widest text-center font-bold">Presence_Grid</p>
-            <div className="grid grid-cols-5 gap-2">
-              <div className={`h-5 w-5 border border-amber-500 text-amber-500 flex items-center justify-center text-[10px] ${feverMode ? 'animate-ping' : ''}`}>⬢</div>
-              {Array.from({ length: onlineCount - 1 }).map((_, i) => (
-                <div key={i} className="h-5 w-5 border border-emerald-500/30 text-emerald-500/50 flex items-center justify-center text-[10px] animate-pulse">⬡</div>
+          <div className="p-4 border border-zinc-800 bg-zinc-900/20 rounded text-center">
+            <p className="text-[9px] text-zinc-500 mb-3 uppercase tracking-widest font-bold">Presence</p>
+            <div className="flex flex-wrap justify-center gap-2">
+              <div className={`h-4 w-4 border border-amber-500 text-amber-500 flex items-center justify-center text-[8px] ${feverMode ? 'animate-ping' : ''}`}>⬢</div>
+              {Array.from({ length: Math.max(0, onlineCount - 1) }).map((_, i) => (
+                <div key={i} className="h-4 w-4 border border-emerald-500/30 text-emerald-500/50 flex items-center justify-center text-[8px] animate-pulse">⬡</div>
               ))}
             </div>
           </div>
@@ -209,7 +227,6 @@ export default function DashboardPage() {
           </div>
         </aside>
 
-        {/* MAIN FEED */}
         <main className="flex-1 flex flex-col relative bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
           <header className="p-6 border-b border-zinc-900 bg-black/80 flex justify-between items-center">
             <div className="flex items-center gap-4">
@@ -221,7 +238,7 @@ export default function DashboardPage() {
 
           <div className="flex-1 overflow-y-auto p-10 space-y-4">
             {messages.map((msg) => (
-              <div key={msg.id} className={`group border-l-2 py-2 px-5 transition-all ${msg.is_founder_msg ? 'border-amber-500 bg-amber-500/5 shadow-[0_0_10px_rgba(245,158,11,0.1)]' : 'border-zinc-800'}`}>
+              <div key={msg.id} className={`group border-l-2 py-2 px-5 transition-all ${msg.is_founder_msg ? 'border-amber-500 bg-amber-500/5' : 'border-zinc-800'}`}>
                 <div className="flex gap-4 items-center mb-1">
                   <span className={`text-[9px] font-black ${msg.is_founder_msg ? 'text-amber-500' : (msg.profiles?.signal_score || 0) >= 2000 ? 'text-emerald-400 animate-pulse' : 'text-zinc-600'}`}>
                     {msg.is_founder_msg ? 'GENESIS' : (msg.profiles?.signal_score || 0) >= 2000 ? 'ALPHA' : 'CITIZEN'} // {msg.profiles?.email?.split('@')[0].toUpperCase()}
