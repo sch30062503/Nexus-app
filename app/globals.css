@@ -24,3 +24,19 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Nexus Enter button — glowing green pulse */
+.nexus-enter-btn {
+  box-shadow: 0 0 24px rgba(16, 185, 129, 0.35);
+  animation: nexus-glow 2.5s ease-in-out infinite;
+}
+
+@keyframes nexus-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 24px rgba(16, 185, 129, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 36px rgba(16, 185, 129, 0.55);
+  }
+}
