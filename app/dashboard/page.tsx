@@ -79,11 +79,12 @@ export default function DashboardPage() {
         }
       });
 
-      return () => {
-        supabase.removeChannel(feverChannel);
-        supabase.removeChannel(msgChannel);
-        supabase.removeChannel(presenceChannel);
-      };
+    return () => {
+      supabase.removeChannel(feverChannel);
+      supabase.removeChannel(msgChannel);
+      supabase.removeChannel(presenceChannel);
+    };
+  }, [profile]);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -185,17 +186,14 @@ export default function DashboardPage() {
             <div className={`rounded-lg border p-4 ${feverMode ? 'border-red-500/30 bg-red-950/20' : 'border-zinc-800 bg-zinc-900/40'}`}>
               <p className="text-[9px] uppercase text-zinc-500 mb-3 tracking-widest text-center">Presence_Grid</p>
               <div className="grid grid-cols-4 gap-2">
-                {/* Founder Node (Fixed) */}
                 <div className={`h-8 flex items-center justify-center border rounded transition-all duration-1000 ${feverMode ? 'border-red-500 text-red-500 animate-ping' : 'border-amber-500 text-amber-500'}`}>
                   ⬢
                 </div>
-                {/* Dynamic Citizen Nodes */}
                 {Array.from({ length: Math.max(0, onlineCount - 1) }).map((_, i) => (
                   <div key={i} className={`h-8 flex items-center justify-center border rounded animate-pulse ${feverMode ? 'border-red-400/30 text-red-400' : 'border-emerald-500/30 text-emerald-500'}`}>
                     ⬡
                   </div>
                 ))}
-                {/* Empty Slots */}
                 {Array.from({ length: Math.max(0, 11 - (onlineCount - 1)) }).map((_, i) => (
                   <div key={i} className="h-8 border border-zinc-900 rounded bg-black/20" />
                 ))}
