@@ -15,7 +15,7 @@ export default function DashboardPage() {
   const [activeDistrict, setActiveDistrict] = useState<District | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
-  const [filterQuery, setFilterQuery] = useState(""); // TUNER STATE
+  const [filterQuery, setFilterQuery] = useState(""); 
   const [loading, setLoading] = useState(true);
   const [onlineCount, setOnlineCount] = useState(1);
   const [isCooldown, setIsCooldown] = useState(false);
@@ -24,28 +24,14 @@ export default function DashboardPage() {
   const [isEditingDecree, setIsEditingDecree] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [trendingTags, setTrendingTags] = useState<string[]>([]);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
+  const [globalSubjects, setGlobalSubjects] = useState<string[]>([]); // DATA FOR NEW DISTRICTS
   const [showSpawner, setShowSpawner] = useState(false);
   const [newDist, setNewDist] = useState({ name: '', slug: '', min: 0, desc: '' });
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const triggerToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
-  };
-
-  // --- DISCOVERY LOGIC: Extract Hashtags ---
-  const extractTrendingTags = (msgs: Message[]) => {
-    const counts: Record<string, number> = {};
-    msgs.forEach(m => {
-      const tags = m.content.match(/#\w+/g);
-      tags?.forEach(tag => {
-        const t = tag.toLowerCase();
-        counts[t] = (counts[t] || 0) + 1;
-      });
-    });
-    const sorted = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 5);
-    setTrendingTags(sorted);
   };
 
   const loadNexus = async () => {
@@ -65,19 +51,39 @@ export default function DashboardPage() {
 
     const { data: decreeData } = await supabase.from("decrees").select("content").eq("id", 1).single();
     if (decreeData) setDecree(decreeData.content);
+    
+    // FETCH GLOBAL INTEL FOR SPAWNING
+    const { data: allMsgs } = await supabase.from("messages").select("content").limit(200);
+    if (allMsgs) {
+      const counts: Record<string, number> = {};
+      allMsgs.forEach(m => {
+        const tags = m.content.match(/#\w+/g);
+        tags?.forEach(tag => { counts[tag] = (counts[tag] || 0) + 1; });
+      });
+      setGlobalSubjects(Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 5));
+    }
+
     setLoading(false);
   };
 
   const fetchDistrictMessages = async (slug: string) => {
-    const { data } = await supabase.from("messages")
-      .select("*, profiles(email, signal_score)")
-      .eq("district_slug", slug)
-      .order("created_at", { ascending: true })
-      .limit(100);
+    const { data } = await supabase.from("messages").select("*, profiles(email, signal_score)").eq("district_slug", slug).order("created_at", { ascending: true }).limit(100);
     if (data) {
       setMessages(data as any);
       extractTrendingTags(data as any);
     }
+  };
+
+  const extractTrendingTags = (msgs: Message[]) => {
+    const counts: Record<string, number> = {};
+    msgs.forEach(m => {
+      const tags = m.content.match(/#\w+/g);
+      tags?.forEach(tag => {
+        const t = tag.toLowerCase();
+        counts[t] = (counts[t] || 0) + 1;
+      });
+    });
+    setTrendingTags(Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 5));
   };
 
   useEffect(() => { loadNexus(); }, []);
@@ -94,10 +100,37 @@ export default function DashboardPage() {
             return next;
           });
         }).subscribe();
-    return () => { supabase.removeChannel(channel); };
+
+    const feverChannel = supabase.channel('global-events').on('broadcast', { event: 'FEVER_TOGGLE' }, (payload) => setFeverMode(payload.payload.active)).subscribe();
+
+    const presenceChannel = supabase.channel('online-users');
+    presenceChannel.on('presence', { event: 'sync' }, () => setOnlineCount(Object.keys(presenceChannel.presenceState()).length)).subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') await presenceChannel.track({ user_id: profile.id, online_at: new Date().toISOString() });
+    });
+
+    return () => { supabase.removeChannel(channel); supabase.removeChannel(feverChannel); supabase.removeChannel(presenceChannel); };
   }, [activeDistrict, profile]);
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, filterQuery]);
+
+  const toggleFever = () => {
+    const newState = !feverMode;
+    setFeverMode(newState);
+    supabase.channel('global-events').send({ type: 'broadcast', event: 'FEVER_TOGGLE', payload: { active: newState } });
+    triggerToast(newState ? "FEVER ENGAGED" : "FEVER EXPIRED");
+  };
+
+  const spawnDistrict = async () => {
+    if (!newDist.slug || !newDist.name) return triggerToast("MISSING DATA");
+    const { error } = await supabase.from('districts').insert({
+      name: newDist.name, slug: newDist.slug, min_score: newDist.min, description: newDist.desc
+    });
+    if (!error) {
+      triggerToast("REALITY MANIFESTED");
+      setShowSpawner(false);
+      loadNexus();
+    }
+  };
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -111,7 +144,7 @@ export default function DashboardPage() {
     setTimeout(() => setIsCooldown(false), 800);
   };
 
-  if (loading || !profile) return <div className="p-10 font-mono text-emerald-500 animate-pulse text-center">Tuning Frequencies...</div>;
+  if (loading || !profile) return <div className="p-10 font-mono text-emerald-500 animate-pulse text-center">ACCESSING ARCHITECT PANEL...</div>;
 
   return (
     <div className={`min-h-screen flex flex-col font-mono transition-colors duration-1000 ${feverMode ? 'bg-[#1a0505]' : 'bg-[#050505]'} text-zinc-400 overflow-hidden`}>
@@ -120,9 +153,13 @@ export default function DashboardPage() {
       <div className={`w-full py-2 px-4 border-b flex justify-between items-center ${feverMode ? 'bg-red-500/10 border-red-500' : 'bg-amber-500/5 border-amber-500/30'}`}>
         <div className="flex items-center gap-3">
           <span className="text-[10px] text-amber-500 font-black uppercase tracking-widest">Genesis_Decree:</span>
-          <p className="text-xs text-zinc-300 italic">"{decree}"</p>
+          {isEditingDecree ? (
+            <input value={decree} onChange={(e) => setDecree(e.target.value)} onBlur={async () => { await supabase.from("decrees").update({ content: decree }).eq("id", 1); setIsEditingDecree(false); }} className="bg-transparent border-b border-white/20 text-xs text-white outline-none w-96" autoFocus />
+          ) : (
+            <p className="text-xs text-zinc-300 italic">"{decree}"</p>
+          )}
         </div>
-        {profile.is_founder && <button onClick={() => setIsEditingDecree(true)} className="text-[9px] text-zinc-600 hover:text-white transition-colors">[EDIT_ARCHIVE]</button>}
+        {profile.is_founder && <button onClick={() => setIsEditingDecree(true)} className="text-[9px] text-zinc-600 hover:text-white">[EDIT]</button>}
       </div>
 
       <div className="flex-1 flex overflow-hidden">
@@ -133,33 +170,61 @@ export default function DashboardPage() {
             {profile.is_founder && <button onClick={() => setShowSpawner(!showSpawner)} className="text-[10px] text-amber-500 font-bold underline">SPAWN</button>}
           </div>
 
+          {/* SPAWNER INTEL PANEL */}
+          {showSpawner && (
+            <div className="p-4 border border-amber-500/30 bg-amber-500/5 rounded space-y-3">
+              <p className="text-[8px] text-amber-500/60 font-black uppercase">Global_Signal_Intel:</p>
+              <div className="flex flex-wrap gap-1 mb-2">
+                {globalSubjects.map(s => <span key={s} className="text-[8px] bg-zinc-900 px-1 text-zinc-400 border border-zinc-800">{s}</span>)}
+              </div>
+              <input placeholder="District Name" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, name: e.target.value})} />
+              <input placeholder="slug-name" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, slug: e.target.value})} />
+              <input placeholder="Min Signal" type="number" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, min: parseInt(e.target.value)})} />
+              <button onClick={spawnDistrict} className="w-full bg-amber-500 text-black py-2 text-[10px] font-black uppercase">Finalize Reality</button>
+            </div>
+          )}
+
           <nav className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
             {districts.map((d) => (
               <button key={d.slug} onClick={() => { setActiveDistrict(d); fetchDistrictMessages(d.slug); setFilterQuery(""); }} 
                 className={`w-full text-left p-4 border transition-all rounded ${activeDistrict?.slug === d.slug ? 'border-emerald-500 bg-emerald-500/5' : 'border-zinc-900 opacity-40 hover:opacity-100 hover:border-zinc-700'}`}>
                 <div className="flex justify-between items-center">
                   <span className="text-[11px] font-black uppercase">{d.name}</span>
-                  <span className="text-[8px] opacity-50">SIG: {d.min_score}</span>
+                  <span className="text-[8px] text-zinc-800">SIG: {d.min_score}</span>
                 </div>
               </button>
             ))}
           </nav>
 
-          {/* TRENDING TAGS SECTION */}
+          {/* LIVE FREQUENCIES (Local to District) */}
           <div className="p-4 border border-zinc-900 bg-black/40 rounded">
-            <p className="text-[9px] text-zinc-600 mb-3 uppercase tracking-widest font-bold">Live_Frequencies</p>
+            <p className="text-[9px] text-zinc-600 mb-3 uppercase font-bold tracking-[0.2em]">Live_Frequencies</p>
             <div className="flex flex-wrap gap-2">
-              {trendingTags.length > 0 ? trendingTags.map(tag => (
+              {trendingTags.map(tag => (
                 <button key={tag} onClick={() => setFilterQuery(tag)} className="text-[10px] bg-zinc-900 px-2 py-1 rounded text-emerald-500 hover:bg-emerald-500 hover:text-black transition-all">
                   {tag}
                 </button>
-              )) : <span className="text-[10px] italic text-zinc-800">No active tags...</span>}
+              ))}
+            </div>
+          </div>
+
+          {/* PRESENCE GRID */}
+          <div className="p-4 border border-zinc-800 bg-zinc-900/20 rounded">
+            <p className="text-[9px] text-zinc-500 mb-3 uppercase text-center font-bold">Presence_Grid</p>
+            <div className="flex flex-wrap justify-center gap-2">
+              <div className={`h-4 w-4 border border-amber-500 text-amber-500 flex items-center justify-center text-[8px] ${feverMode ? 'animate-ping' : ''}`}>⬢</div>
+              {Array.from({ length: Math.max(0, onlineCount - 1) }).map((_, i) => (
+                <div key={i} className="h-4 w-4 border border-emerald-500/30 text-emerald-500/50 flex items-center justify-center text-[8px] animate-pulse">⬡</div>
+              ))}
             </div>
           </div>
 
           <div className="p-5 border-t border-zinc-900 bg-black/40">
             <p className="text-[9px] text-zinc-600 mb-1 font-bold">SIGNAL_SCORE</p>
             <p className="text-3xl font-black text-white tracking-tighter">{profile.signal_score?.toLocaleString()}</p>
+            {profile.is_founder && (
+              <button onClick={toggleFever} className={`w-full mt-4 p-2 text-[9px] font-black border transition-all ${feverMode ? 'bg-red-600 border-red-500 text-white' : 'border-red-900/50 text-red-900 hover:text-red-600 hover:border-red-600'}`}>FEVER_TOGGLE</button>
+            )}
           </div>
         </aside>
 
@@ -171,29 +236,23 @@ export default function DashboardPage() {
               <span className="text-sm font-black uppercase text-white tracking-widest">{activeDistrict?.name}</span>
             </div>
 
-            {/* THE TUNER UI */}
             <div className="flex items-center gap-3 bg-zinc-900/50 border border-zinc-800 px-4 py-1.5 rounded-full transition-all focus-within:border-emerald-500/50">
-              <span className="text-[9px] text-emerald-500 font-black tracking-tighter">TUNER:</span>
+              <span className="text-[9px] text-emerald-500 font-black">TUNER:</span>
               <input value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} placeholder="Search signal..." className="bg-transparent outline-none text-[10px] text-zinc-200 w-32" />
               {filterQuery && <button onClick={() => setFilterQuery("")} className="text-[9px] text-zinc-500 hover:text-white">×</button>}
             </div>
           </header>
 
           <div className="flex-1 overflow-y-auto p-10 space-y-4">
-            {messages
-              .filter(m => m.content.toLowerCase().includes(filterQuery.toLowerCase()))
-              .map((msg) => (
+            {messages.filter(m => m.content.toLowerCase().includes(filterQuery.toLowerCase())).map((msg) => (
               <div key={msg.id} className={`group border-l-2 py-2 px-5 transition-all ${msg.is_founder_msg ? 'border-amber-500 bg-amber-500/5' : 'border-zinc-800 hover:border-zinc-700'}`}>
                 <div className="flex gap-4 items-center mb-1">
                   <span className={`text-[9px] font-black tracking-widest ${msg.is_founder_msg ? 'text-amber-500' : 'text-zinc-500'}`}>
                     {msg.is_founder_msg ? 'GENESIS' : 'CITIZEN'} // {msg.profiles?.email?.split('@')[0].toUpperCase()}
                   </span>
-                  <span className="text-[8px] text-zinc-900">{new Date(msg.created_at).toLocaleTimeString()}</span>
                 </div>
-                <p className={`text-sm leading-relaxed ${msg.is_founder_msg ? 'text-amber-100 font-medium' : 'text-zinc-300'}`}>
-                  {msg.content.split(' ').map((word, i) => (
-                    word.startsWith('#') ? <span key={i} className="text-emerald-500 font-bold">{word} </span> : word + ' '
-                  ))}
+                <p className={`text-sm leading-relaxed ${msg.is_founder_msg ? 'text-amber-100' : 'text-zinc-300'}`}>
+                  {msg.content.split(' ').map((word, i) => word.startsWith('#') ? <span key={i} className="text-emerald-500 font-bold">{word} </span> : word + ' ')}
                 </p>
               </div>
             ))}
@@ -201,11 +260,9 @@ export default function DashboardPage() {
           </div>
 
           <form onSubmit={sendMessage} className="p-8 border-t border-zinc-900 bg-black/90">
-            <div className="max-w-4xl mx-auto">
-              <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} disabled={isCooldown} 
-                placeholder={isCooldown ? "TRANSMITTING..." : `INPUT SIGNAL TO ${activeDistrict?.name.toUpperCase()}... (Use #tags to trend)`} 
-                className="w-full bg-transparent outline-none text-sm text-emerald-400 font-bold placeholder:text-zinc-900" />
-            </div>
+            <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} disabled={isCooldown} 
+              placeholder={isCooldown ? "TRANSMITTING..." : `INPUT SIGNAL...`} 
+              className="w-full bg-transparent outline-none text-sm text-emerald-400 font-bold placeholder:text-zinc-900" />
           </form>
         </main>
       </div>
