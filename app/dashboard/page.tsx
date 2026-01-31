@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
@@ -11,197 +11,149 @@ type Profile = {
   is_founder: boolean | null;
 };
 
-/** Mask the part before @ (local part only). e.g. "john" → "jo***" */
-function maskEmailLocal(email: string | null): string {
-  if (!email) return "—";
-  const at = email.indexOf("@");
-  if (at <= 0) return "***";
-  const local = email.slice(0, at);
-  if (local.length <= 2) return `${local}***`;
-  return `${local.slice(0, 2)}***`;
-}
+type Message = {
+  id: string;
+  content: string;
+  created_at: string;
+  profile_id: string;
+  is_founder_msg: boolean;
+  profiles?: { email: string };
+};
 
 export default function DashboardPage() {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [newMessage, setNewMessage] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  const [leaderboard, setLeaderboard] = useState<Profile[]>([]);
-  const [leaderboardLoading, setLeaderboardLoading] = useState(true);
-  const [leaderboardSync, setLeaderboardSync] = useState(false);
-
+  // 1. Initial Load & Auth Sync
   useEffect(() => {
     const load = async () => {
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return router.replace("/");
 
-      if (sessionError || !session?.user) {
-        router.replace("/");
-        return;
-      }
-
-      const { data: profileData, error: profileError } = await supabase
+      const { data: profileData } = await supabase
         .from("profiles")
-        .select("id, email, signal_score, is_founder")
+        .select("*")
         .eq("id", session.user.id)
         .single();
 
-      if (profileError || !profileData) {
-        router.replace("/");
-        return;
-      }
-
-      setProfile(profileData as Profile);
+      if (profileData) setProfile(profileData as Profile);
       setLoading(false);
     };
-
     load();
   }, [router]);
 
+  // 2. Realtime Messages Logic
   useEffect(() => {
     if (!profile) return;
 
-    const fetchLeaderboard = async () => {
-      setLeaderboardSync(true);
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, email, signal_score, is_founder")
-        .order("signal_score", { ascending: false })
-        .limit(5);
-
-      if (!error && data) {
-        setLeaderboard(data as Profile[]);
-      }
-      setLeaderboardLoading(false);
-      setLeaderboardSync(false);
+    // Initial Fetch
+    const fetchMessages = async () => {
+      const { data } = await supabase
+        .from("messages")
+        .select("*, profiles(email)")
+        .order("created_at", { ascending: true })
+        .limit(20);
+      if (data) setMessages(data as any);
     };
 
-    fetchLeaderboard();
+    fetchMessages();
+
+    // Subscribe to new messages
+    const channel = supabase
+      .channel("nexus-wall")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, 
+        async (payload) => {
+          const { data: userData } = await supabase
+            .from("profiles")
+            .select("email")
+            .eq("id", payload.new.profile_id)
+            .single();
+          
+          const msgWithProfile = { ...payload.new, profiles: userData } as Message;
+          setMessages((prev) => [...prev.slice(-19), msgWithProfile]);
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [profile]);
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    router.replace("/");
+  // Auto-scroll to bottom
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const sendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !profile) return;
+
+    await supabase.from("messages").insert({
+      content: newMessage,
+      profile_id: profile.id,
+      is_founder_msg: profile.is_founder
+    });
+    setNewMessage("");
   };
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#0a0a0a] font-mono text-emerald-400/80">
-        <span className="animate-pulse">Loading...</span>
-      </div>
-    );
-  }
-
-  if (!profile) {
-    return null;
-  }
-
-  const isFounder = profile.is_founder === true;
+  if (loading || !profile) return <div className="p-10 font-mono text-emerald-500 animate-pulse">Establishing Uplink...</div>;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] p-6 font-mono text-zinc-300">
-      <div className="mx-auto max-w-2xl">
-        {/* Header */}
-        <div className="mb-8 flex items-center justify-between border-b border-zinc-800 pb-4">
-          <span className="text-[11px] uppercase tracking-[0.2em] text-emerald-500/90">
-            nexus://dashboard
-          </span>
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="rounded border border-zinc-600 bg-zinc-900/80 px-3 py-1.5 text-[11px] uppercase tracking-wider text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-300"
-          >
-            Logout
-          </button>
+    <div className="min-h-screen bg-[#0a0a0a] p-4 font-mono text-zinc-300 md:p-10">
+      <div className="mx-auto max-w-3xl">
+        {/* Header - Compact */}
+        <div className="mb-6 flex items-center justify-between border-b border-zinc-800 pb-4">
+          <span className="text-[10px] tracking-[0.3em] text-emerald-500/60 uppercase">Node::{profile.email?.split('@')[0]}</span>
+          <button onClick={() => supabase.auth.signOut().then(() => router.push("/"))} className="text-[10px] text-zinc-600 hover:text-red-400 uppercase">Disconnect</button>
         </div>
 
-        {/* Security Clearance card */}
-        <div
-          className={`rounded-lg border p-6 ${
-            isFounder
-              ? "border-amber-500/60 bg-amber-500/5 shadow-[0_0_24px_rgba(245,158,11,0.15)]"
-              : "border-zinc-700/80 bg-zinc-900/30"
-          }`}
-        >
-          <p className="mb-2 text-[10px] uppercase tracking-[0.25em] text-zinc-500">
-            Security Clearance
-          </p>
-          <p
-            className={`text-xl font-medium uppercase tracking-wider ${
-              isFounder ? "text-amber-400" : "text-emerald-400/90"
-            }`}
-          >
-            {isFounder ? "GENESIS FOUNDER" : "CLEARED"}
-          </p>
-        </div>
-
-        {/* Signal score */}
-        <div className="mt-6 rounded-lg border border-zinc-700/80 bg-zinc-900/30 p-6">
-          <p className="mb-1 text-[10px] uppercase tracking-[0.25em] text-zinc-500">
-            Signal
-          </p>
-          <p className="text-3xl font-medium tabular-nums text-emerald-400">
-            {profile.signal_score ?? 0}
-          </p>
-        </div>
-
-        {/* Global Leaderboard */}
-        <div className="mt-6 rounded-lg border border-zinc-700/80 bg-zinc-900/30 p-6">
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-[10px] uppercase tracking-[0.25em] text-zinc-500">
-              Global Leaderboard
-            </p>
-            {leaderboardSync && (
-              <span className="nexus-sync-pulse text-[10px] uppercase tracking-wider text-emerald-500/80">
-                Syncing…
-              </span>
-            )}
+        <div className="grid gap-6 md:grid-cols-3">
+          {/* Stats Sidebar */}
+          <div className="space-y-4">
+            <div className={`rounded-lg border p-4 ${profile.is_founder ? 'border-amber-500/50 bg-amber-500/5' : 'border-zinc-800 bg-zinc-900/40'}`}>
+              <p className="text-[9px] uppercase text-zinc-500 mb-1">Status</p>
+              <p className={`text-xs font-bold ${profile.is_founder ? 'text-amber-400' : 'text-emerald-400'}`}>
+                {profile.is_founder ? "GENESIS FOUNDER" : "CITIZEN"}
+              </p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
+              <p className="text-[9px] uppercase text-zinc-500 mb-1">Signal Score</p>
+              <p className="text-xl text-emerald-400">{profile.signal_score}</p>
+            </div>
           </div>
-          {leaderboardLoading ? (
-            <p className="text-[11px] text-zinc-500">Loading leaderboard…</p>
-          ) : leaderboard.length === 0 ? (
-            <p className="text-[11px] text-zinc-500">No entries yet.</p>
-          ) : (
-            <ul className="space-y-2">
-              {leaderboard.map((entry, i) => {
-                const isFounderRow = entry.is_founder === true;
-                return (
-                  <li
-                    key={entry.id}
-                    className="nexus-leaderboard-row flex items-center justify-between border-b border-zinc-800/60 py-2.5 pr-2 text-[13px]"
-                    style={{ animationDelay: `${i * 80}ms` }}
-                  >
-                    <span className="tabular-nums text-zinc-500">#{i + 1}</span>
-                    <span
-                      className={`min-w-0 flex-1 truncate px-3 ${
-                        isFounderRow ? "text-amber-400" : "text-zinc-300"
-                      }`}
-                    >
-                      {maskEmailLocal(entry.email)}
-                    </span>
-                    <span
-                      className={`tabular-nums font-medium ${
-                        isFounderRow ? "text-amber-400" : "text-emerald-400"
-                      }`}
-                    >
-                      {entry.signal_score ?? 0}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
 
-        {/* Email (optional) */}
-        {profile.email && (
-          <p className="mt-6 text-[11px] text-zinc-500">
-            <span className="text-zinc-600">Logged in as </span>
-            {profile.email}
-          </p>
-        )}
+          {/* Main Signal Wall */}
+          <div className="md:col-span-2 flex flex-col h-[500px] border border-zinc-800 rounded-lg bg-zinc-900/20">
+            <div className="p-3 border-b border-zinc-800 bg-zinc-900/40 flex justify-between">
+              <span className="text-[10px] uppercase tracking-widest text-zinc-500">Signal_Wall.log</span>
+              <span className="text-[10px] text-emerald-500/50 animate-pulse">LIVE</span>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+              {messages.map((msg) => (
+                <div key={msg.id} className="text-xs">
+                  <span className={`font-bold ${msg.is_founder_msg ? 'text-amber-500' : 'text-emerald-600'}`}>
+                    [{msg.profiles?.email?.split('@')[0] || 'Unknown'}]:
+                  </span>
+                  <span className="ml-2 text-zinc-300 break-words">{msg.content}</span>
+                </div>
+              ))}
+              <div ref={scrollRef} />
+            </div>
+
+            <form onSubmit={sendMessage} className="p-3 border-t border-zinc-800 bg-zinc-900/40">
+              <input 
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder="Broadcast a signal..."
+                className="w-full bg-transparent border-none outline-none text-xs text-emerald-400 placeholder:text-zinc-700"
+              />
+            </form>
+          </div>
+        </div>
       </div>
     </div>
   );
