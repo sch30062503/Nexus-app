@@ -3,11 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert } from "lucide-react";
+import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Heart } from "lucide-react";
 
 type District = { slug: string; name: string; min_score: number; description: string; last_activity?: string };
 type Profile = { id: string; email: string | null; username: string | null; signal_score: number | null; is_founder: boolean | null };
-type Message = { id: string; content: string; created_at: string; district_slug: string; is_founder_msg: boolean; profiles?: { username: string, signal_score: number } };
+type Message = { id: string; content: string; created_at: string; district_slug: string; is_founder_msg: boolean; profile_id: string; profiles?: { username: string, signal_score: number } };
 type Megaphone = { msg: string; bid: number; owner: string };
 
 export default function DashboardPage() {
@@ -31,6 +31,11 @@ export default function DashboardPage() {
   const [newDist, setNewDist] = useState({ name: '', slug: '', min: 0, desc: '' });
   const [newUsername, setNewUsername] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // GESTURE & INTERACTION STATE
+  const touchStart = useRef<number | null>(null);
+  const touchEnd = useRef<number | null>(null);
+  const lastTap = useRef<number>(0);
 
   // ECONOMY
   const [megaphone, setMegaphone] = useState<Megaphone>({ msg: "WAITING FOR SIGNAL...", bid: 0, owner: "SYSTEM" });
@@ -73,7 +78,6 @@ export default function DashboardPage() {
     const { data: decreeData } = await supabase.from("decrees").select("content").eq("id", 1).single();
     if (decreeData) setDecree(decreeData.content);
     
-    // FETCH GLOBAL TRENDS & SUBJECTS
     const { data: allMsgs } = await supabase.from("messages").select("content").limit(200);
     if (allMsgs) {
       const counts: Record<string, number> = {};
@@ -86,10 +90,12 @@ export default function DashboardPage() {
     setLoading(false);
   };
 
-  const handleOverride = async () => {
-    if (!msgInput || bidInput <= megaphone.bid) return triggerToast("BID TOO LOW");
-    if ((profile?.signal_score || 0) < bidInput) return triggerToast("INSUFFICIENT SIGNAL");
-    const { data: success } = await supabase.rpc('place_megaphone_bid', { user_id: profile?.id, new_msg: msgInput.toUpperCase(), new_bid: bidInput });
+  const handleOverride = async (customMsg?: string, customBid?: number) => {
+    const finalMsg = customMsg || msgInput;
+    const finalBid = customBid || bidInput;
+    if (!finalMsg || finalBid <= megaphone.bid) return triggerToast("BID TOO LOW");
+    if ((profile?.signal_score || 0) < finalBid) return triggerToast("INSUFFICIENT SIGNAL");
+    const { data: success } = await supabase.rpc('place_megaphone_bid', { user_id: profile?.id, new_msg: finalMsg.toUpperCase(), new_bid: finalBid });
     if (success) { triggerToast("TRANSMISSION SEIZED"); setMsgInput(""); loadNexus(); }
   };
 
@@ -117,6 +123,32 @@ export default function DashboardPage() {
     if (!newUsername || newUsername.length < 3) return triggerToast("ID TOO SHORT");
     const { error } = await supabase.from('profiles').update({ username: newUsername }).eq('id', profile?.id);
     if (!error) { triggerToast("IDENTITY ESTABLISHED"); setProfile(prev => prev ? { ...prev, username: newUsername } : null); setNewUsername(""); }
+  };
+
+  // TOUCH GESTURE: SIDEBAR
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      touchEnd.current = null;
+      touchStart.current = e.targetTouches[0].clientX;
+    }
+  };
+  const onTouchMove = (e: React.TouchEvent) => { if (e.touches.length === 2) touchEnd.current = e.targetTouches[0].clientX; };
+  const onTouchEnd = () => {
+    if (!touchStart.current || !touchEnd.current) return;
+    const distance = touchStart.current - touchEnd.current;
+    if (distance < -70) setIsSidebarOpen(true);
+  };
+
+  // DOUBLE TAP TO LIKE
+  const handleDoubleTap = async (targetUserId: string) => {
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 300;
+    if (now - lastTap.current < DOUBLE_TAP_DELAY) {
+      if (targetUserId === profile?.id) return triggerToast("CANNOT BOOST SELF");
+      await supabase.rpc('increment_signal_score', { user_id: targetUserId, amount: 1 });
+      triggerToast("SIGNAL BOOSTED +1");
+    }
+    lastTap.current = now;
   };
 
   useEffect(() => { loadNexus(); }, []);
@@ -160,164 +192,140 @@ export default function DashboardPage() {
     setTimeout(() => setIsCooldown(false), 800);
   };
 
-  if (loading || !profile) return <div className="p-10 font-mono text-emerald-500 animate-pulse text-center uppercase tracking-tighter">Syncing Nexus...</div>;
+  const handleMobileBid = () => {
+    const msg = prompt("ENTER OVERRIDE MESSAGE:");
+    const bid = prompt(`CURRENT BID: ${megaphone.bid}. ENTER HIGHER BID:`);
+    if (msg && bid) handleOverride(msg, parseInt(bid));
+  };
+
+  if (loading || !profile) return <div className="h-screen flex items-center justify-center bg-black font-mono text-emerald-500 animate-pulse text-xs uppercase tracking-[0.3em]">Syncing Nexus...</div>;
 
   return (
-    <div className={`h-screen flex flex-col font-mono transition-colors duration-1000 ${feverMode ? 'bg-[#1a0505]' : 'bg-[#050505]'} text-zinc-400 overflow-hidden`}>
+    <div 
+      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+      className={`h-[100dvh] flex flex-col font-mono transition-colors duration-1000 ${feverMode ? 'bg-[#1a0505]' : 'bg-[#050505]'} text-zinc-400 overflow-hidden select-none`}
+    >
       
-      {/* 📱 MOBILE HEADER */}
-      <div className="lg:hidden flex items-center justify-between p-4 border-b border-zinc-900 bg-black/90 z-50">
-        <button onClick={() => setIsSidebarOpen(true)} className="p-2 bg-zinc-900 rounded border border-zinc-800">
-          <Menu size={20} className="text-emerald-500" />
-        </button>
-        <div className="flex flex-col items-end">
-          <span className="text-[10px] text-emerald-500 font-bold animate-pulse uppercase tracking-tighter">● {onlineCount} ONLINE</span>
-          <p className="text-[11px] text-white font-black tracking-widest">{profile.username || 'ANON'}</p>
-        </div>
-      </div>
-
-      {/* 📢 GLOBAL MEGAPHONE TICKER (All Screens) */}
-      <div className="bg-emerald-500/10 border-b border-emerald-500/30 p-4 flex flex-col lg:flex-row gap-4 items-center justify-between z-40">
-        <div className="w-full lg:flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <Radio size={12} className="text-emerald-500 animate-pulse" />
-            <span className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.2em]">Global_Transmission // Stake: {megaphone.bid}</span>
+      {/* 📱 HEADER (Room Persistence & Tap to Open) */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md z-[70]">
+        <div className="flex items-center gap-4">
+          <button onClick={() => setIsSidebarOpen(true)} className="p-1 text-emerald-500 lg:hidden active:scale-90 transition-transform"><Menu size={24} /></button>
+          <div className="flex flex-col cursor-pointer" onClick={() => setIsSidebarOpen(true)}>
+            <span className="text-[9px] text-zinc-600 font-black tracking-tighter uppercase">Nexus_Terminal_v2</span>
+            <span className="text-xs text-white font-black uppercase tracking-[0.2em] truncate max-w-[140px]">{activeDistrict?.name || "Initializing..."}</span>
           </div>
-          <p className="text-sm text-white font-black italic tracking-tight uppercase truncate lg:whitespace-normal">"{megaphone.msg}"</p>
         </div>
-        
-        <div className="flex w-full lg:w-auto gap-2 bg-black/50 p-2 border border-zinc-800 rounded">
-          <input value={msgInput} onChange={(e) => setMsgInput(e.target.value)} placeholder="OVERRIDE" className="flex-1 lg:w-40 bg-transparent text-[10px] outline-none text-emerald-400 font-bold" />
-          <input type="number" onChange={(e) => setBidInput(parseInt(e.target.value))} placeholder={`+${megaphone.bid}`} className="w-16 bg-transparent text-[10px] outline-none border-l border-zinc-800 pl-2 text-white" />
-          <button onClick={handleOverride} className="bg-emerald-500 text-black px-4 py-1 text-[10px] font-black hover:bg-white transition-all uppercase">Bid</button>
+        <div className="flex flex-col items-end">
+          <span className="text-[9px] text-emerald-500 font-black animate-pulse uppercase tracking-tighter">● {onlineCount} Live</span>
+          <span className="text-[11px] text-zinc-300 font-black">{profile.signal_score?.toLocaleString()} <span className="text-[7px] text-zinc-600 uppercase">Pts</span></span>
         </div>
       </div>
 
-      {/* GENESIS DECREE BAR (Desktop Only for Layout space) */}
-      <div className={`hidden lg:flex w-full py-2 px-4 border-b items-center justify-between ${feverMode ? 'bg-red-500/10 border-red-500' : 'bg-amber-500/5 border-amber-500/30'}`}>
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] text-amber-500 font-black uppercase">Genesis_Decree:</span>
-          {isEditingDecree ? (
-            <input value={decree} onChange={(e) => setDecree(e.target.value)} onBlur={async () => { await supabase.from("decrees").update({ content: decree }).eq("id", 1); setIsEditingDecree(false); }} className="bg-transparent border-b border-white/20 text-xs text-white outline-none w-96" autoFocus />
-          ) : (
-            <p className="text-xs text-zinc-300 italic">"{decree}"</p>
-          )}
-        </div>
-        <div className="flex gap-4 items-center">
-          <span className="text-[9px] text-emerald-500 font-bold tracking-tighter animate-pulse uppercase">● {onlineCount} ONLINE_PRESENCE</span>
-          {profile.is_founder && <button onClick={() => setIsEditingDecree(true)} className="text-[9px] text-zinc-600 hover:text-white">[EDIT_DECREE]</button>}
+      {/* 📢 MEGAPHONE */}
+      <div className="bg-emerald-500/5 border-b border-emerald-500/20 px-4 py-2 z-40">
+        <div className="flex items-center justify-between gap-4 overflow-hidden">
+          <div className="flex items-center gap-2 min-w-0">
+            <Radio size={12} className="text-emerald-500 animate-pulse flex-shrink-0" />
+            <p className="text-[11px] text-white font-black italic uppercase truncate">"{megaphone.msg}"</p>
+          </div>
+          <button onClick={handleMobileBid} className="flex-shrink-0 bg-emerald-500 text-black px-2 py-0.5 text-[9px] font-black uppercase rounded">BID</button>
         </div>
       </div>
 
       <div className="flex-1 flex overflow-hidden relative">
         {/* SIDEBAR */}
-        <aside className={`fixed inset-0 z-[60] transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 lg:z-auto w-full sm:w-80 border-r border-zinc-900 bg-zinc-950 flex flex-col ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-          <div className="flex lg:hidden p-6 border-b border-zinc-900 justify-between items-center bg-black">
-             <span className="text-sm font-black text-emerald-500 uppercase tracking-widest">Nexus_Terminal</span>
-             <button onClick={() => setIsSidebarOpen(false)} className="p-2 bg-zinc-900 rounded"><X size={20}/></button>
+        <aside className={`fixed inset-0 z-[80] transform transition-transform duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] lg:relative lg:translate-x-0 lg:z-auto w-full sm:w-80 bg-black/95 backdrop-blur-xl border-r border-white/5 flex flex-col ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+          <div className="flex items-center justify-between p-6 border-b border-white/5">
+             <span className="text-xs font-black text-emerald-500 tracking-[0.2em] uppercase">Control_Center</span>
+             <button onClick={() => setIsSidebarOpen(false)} className="p-2 text-zinc-500 lg:hidden"><X size={20}/></button>
           </div>
 
-          <div className="p-6 flex-1 overflow-y-auto space-y-6">
-            <div className="p-4 border border-zinc-800 bg-black/40 rounded">
-              <p className="text-[9px] text-zinc-600 mb-2 font-bold uppercase tracking-widest">Identity_Sync</p>
+          <div className="p-6 flex-1 overflow-y-auto space-y-8 scrollbar-hide">
+            <div className="space-y-3">
+              <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest">Update_ID</p>
               <div className="flex gap-2">
-                <input value={newUsername} onChange={(e) => setNewUsername(e.target.value.toUpperCase())} placeholder={profile.username || "CLAIM_ID"} className="flex-1 bg-black border border-zinc-800 p-2 text-[10px] text-white outline-none" />
-                <button onClick={updateIdentity} className="px-3 bg-zinc-900 text-[10px] hover:bg-emerald-500 hover:text-black">SYNC</button>
+                <input value={newUsername} onChange={(e) => setNewUsername(e.target.value.toUpperCase())} placeholder={profile.username || "ANON"} className="flex-1 bg-white/5 border border-white/10 p-3 text-[10px] text-white outline-none rounded" />
+                <button onClick={updateIdentity} className="px-4 bg-zinc-900 text-[10px] font-black hover:bg-emerald-500 hover:text-black transition-colors rounded">SYNC</button>
               </div>
             </div>
 
-            <div className="flex justify-between items-center">
-              <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Districts</p>
-              {profile.is_founder && <button onClick={() => setShowSpawner(!showSpawner)} className="text-[10px] text-amber-500 underline font-black">SPAWN</button>}
-            </div>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Zones</p>
+                {profile.is_founder && <button onClick={() => setShowSpawner(!showSpawner)} className="text-[10px] text-amber-500 underline font-black uppercase tracking-widest">Spawn</button>}
+              </div>
 
-            {showSpawner && (
-              <div className="p-4 border border-amber-500/30 bg-amber-500/5 rounded space-y-3">
-                 <p className="text-[8px] text-amber-500/60 font-black uppercase">Global_Intel:</p>
-                <div className="flex flex-wrap gap-1 mb-2">
-                  {globalSubjects.map(s => <span key={s} className="text-[8px] bg-zinc-900 px-1 text-zinc-400 border border-zinc-800">{s}</span>)}
+              {showSpawner && (
+                <div className="p-4 border border-amber-500/30 bg-amber-500/5 rounded-lg space-y-3">
+                  <input placeholder="Name" className="w-full bg-black border border-white/10 p-2 text-[10px] rounded" onChange={e => setNewDist({...newDist, name: e.target.value})} />
+                  <input placeholder="slug" className="w-full bg-black border border-white/10 p-2 text-[10px] rounded" onChange={e => setNewDist({...newDist, slug: e.target.value})} />
+                  <input placeholder="Min Signal" type="number" className="w-full bg-black border border-white/10 p-2 text-[10px] rounded" onChange={e => setNewDist({...newDist, min: parseInt(e.target.value)})} />
+                  <button onClick={async () => { await supabase.from('districts').insert({ name: newDist.name, slug: newDist.slug, min_score: newDist.min }); setShowSpawner(false); loadNexus(); }} className="w-full bg-amber-500 text-black py-2 text-[10px] font-black uppercase rounded">Manifest</button>
                 </div>
-                <input placeholder="Name" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, name: e.target.value})} />
-                <input placeholder="slug" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, slug: e.target.value})} />
-                <input placeholder="Min Signal" type="number" className="w-full bg-black border border-zinc-800 p-2 text-[10px]" onChange={e => setNewDist({...newDist, min: parseInt(e.target.value)})} />
-                <button onClick={async () => { await supabase.from('districts').insert({ name: newDist.name, slug: newDist.slug, min_score: newDist.min }); setShowSpawner(false); loadNexus(); }} className="w-full bg-amber-500 text-black py-2 text-[10px] font-black uppercase tracking-widest">Manifest Reality</button>
-                <button onClick={async () => { if(confirm("EXECUTE PURGE?")) await supabase.rpc('collapse_dead_districts'); loadNexus(); }} className="w-full bg-red-900/20 text-red-500 border border-red-900/50 py-1 text-[8px] font-black uppercase">Purge Dead Zones</button>
-              </div>
-            )}
+              )}
 
-            <nav className="space-y-2">
-              {districts.map((d) => {
-                const isLocked = (profile.signal_score || 0) < d.min_score && !profile.is_founder;
-                return (
-                  <button key={d.slug} disabled={isLocked} onClick={() => { setActiveDistrict(d); fetchDistrictMessages(d.slug); setIsSidebarOpen(false); }} className={`w-full text-left p-4 border transition-all rounded ${activeDistrict?.slug === d.slug ? 'border-emerald-500 bg-emerald-500/5' : 'border-zinc-900'} ${isLocked ? 'opacity-30 grayscale cursor-not-allowed' : 'hover:border-zinc-700'}`}>
-                    <div className="flex justify-between items-center">
-                      <span className="text-[11px] font-black uppercase tracking-tight">{isLocked ? "RESTRICTED" : d.name}</span>
-                      <span className="text-[8px] text-zinc-700">REQ: {d.min_score}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </nav>
-
-            <div className="p-4 border border-zinc-900 bg-black/40 rounded">
-              <p className="text-[9px] text-zinc-600 mb-3 uppercase font-bold tracking-[0.2em]">Frequencies</p>
-              <div className="flex flex-wrap gap-2">
-                {trendingTags.map(tag => (
-                  <button key={tag} onClick={() => {setFilterQuery(tag); setIsSidebarOpen(false);}} className="text-[10px] bg-zinc-900 px-2 py-1 rounded text-emerald-500 border border-emerald-500/20">{tag}</button>
-                ))}
-              </div>
+              <nav className="space-y-1">
+                {districts.map((d) => {
+                  const isLocked = (profile.signal_score || 0) < d.min_score && !profile.is_founder;
+                  return (
+                    <button 
+                      key={d.slug} disabled={isLocked} 
+                      onClick={() => { setActiveDistrict(d); fetchDistrictMessages(d.slug); setIsSidebarOpen(false); }} 
+                      className={`w-full flex items-center justify-between p-4 rounded-lg border ${activeDistrict?.slug === d.slug ? 'bg-emerald-500/10 border-emerald-500/40 text-white' : 'border-transparent text-zinc-500'}`}
+                    >
+                      <span className="text-xs font-black uppercase tracking-tighter">{d.name}</span>
+                      {isLocked ? <Target size={12} className="text-zinc-800" /> : <span className="text-[8px] opacity-50">{d.min_score}</span>}
+                    </button>
+                  );
+                })}
+              </nav>
             </div>
           </div>
 
-          <div className="p-6 border-t border-zinc-900 bg-black/40">
-            <p className="text-[9px] text-zinc-600 mb-1 font-bold uppercase tracking-widest">{profile.username || 'CITIZEN'}_SIGNAL</p>
-            <p className="text-3xl font-black text-white tracking-tighter">{profile.signal_score?.toLocaleString()}</p>
-            {profile.is_founder && (
-              <button onClick={() => setFeverMode(!feverMode)} className={`w-full mt-4 p-2 text-[9px] font-black border transition-all ${feverMode ? 'bg-red-600 text-white border-red-400' : 'border-red-900 text-red-900'}`}>FEVER_TOGGLE</button>
-            )}
+          <div className="p-6 bg-black border-t border-white/5 flex justify-between items-center">
+            <div>
+              <p className="text-[9px] text-zinc-600 mb-1 font-black uppercase tracking-widest">Signal_Core</p>
+              <p className="text-3xl font-black text-white tracking-tighter">{profile.signal_score?.toLocaleString()}</p>
+            </div>
+            {profile.is_founder && <button onClick={() => setFeverMode(!feverMode)} className={`p-2 text-[8px] font-black border rounded ${feverMode ? 'bg-red-600 border-red-400 text-white' : 'border-red-900 text-red-900'}`}>FEVER</button>}
           </div>
         </aside>
 
         {/* CHAT AREA */}
-        <main className="flex-1 flex flex-col relative bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
-          <header className="hidden lg:flex p-6 border-b border-zinc-900 bg-black/95 justify-between items-center z-20">
-            <span className="text-sm font-black uppercase text-white tracking-widest">{activeDistrict?.name}</span>
-            <div className="flex items-center gap-3 bg-zinc-900/50 border border-zinc-800 px-4 py-1.5 rounded-full">
-              <span className="text-[9px] text-emerald-500 font-black">TUNER:</span>
-              <input value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} placeholder="Search..." className="bg-transparent outline-none text-[10px] text-zinc-200 w-32" />
-            </div>
-          </header>
-
-          <div className="flex-1 overflow-y-auto p-4 lg:p-10 space-y-4">
+        <main className="flex-1 flex flex-col relative bg-black">
+          <div className="flex-1 overflow-y-auto p-4 lg:p-10 space-y-6 scrollbar-hide">
             {messages.filter(m => m.content.toLowerCase().includes(filterQuery.toLowerCase())).map((msg) => (
-              <div key={msg.id} className={`group border-l-2 py-2 px-4 lg:px-5 transition-all ${msg.is_founder_msg ? 'border-amber-500 bg-amber-500/5' : 'border-zinc-800 hover:border-zinc-700'}`}>
-                <div className="flex flex-wrap gap-2 items-center mb-1">
-                  <span className={`text-[9px] font-black tracking-widest ${getTierColor(msg.profiles?.signal_score || 0, msg.is_founder_msg)}`}>
+              <div 
+                key={msg.id} 
+                onClick={() => handleDoubleTap(msg.profile_id)}
+                className="group flex flex-col gap-1 max-w-[95%] active:scale-[0.98] transition-transform"
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] font-black tracking-widest uppercase ${getTierColor(msg.profiles?.signal_score || 0, msg.is_founder_msg)}`}>
                     {msg.profiles?.username || 'ANON'}
                   </span>
-                  {profile.is_founder && (
-                    <button onClick={() => burnMessage(msg.id)} className="text-[7px] bg-red-900/20 text-red-500 px-1 hover:bg-red-600 hover:text-white uppercase font-black tracking-widest">Burn_Signal</button>
-                  )}
+                  <span className="text-[8px] text-zinc-700 font-bold uppercase">{new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                 </div>
-                <p className={`text-sm leading-relaxed ${msg.is_founder_msg ? 'text-amber-100' : 'text-zinc-300'}`}>
-                  {msg.content.split(' ').map((word, i) => word.startsWith('#') ? <span key={i} className="text-emerald-500 font-bold">{word} </span> : word + ' ')}
-                </p>
+                <div className={`p-4 rounded-2xl rounded-tl-none text-sm leading-relaxed border ${msg.is_founder_msg ? 'bg-amber-500/5 border-amber-500/20 text-amber-100' : 'bg-white/[0.03] border-white/5 text-zinc-300'}`}>
+                  {msg.content.split(' ').map((word, i) => word.startsWith('#') ? <span key={i} className="text-emerald-500 font-black">{word} </span> : word + ' ')}
+                </div>
+                {profile.is_founder && <button onClick={(e) => { e.stopPropagation(); burnMessage(msg.id); }} className="text-[8px] text-red-500/40 hover:text-red-500 uppercase font-black self-start mt-1">Burn_Data</button>}
               </div>
             ))}
             <div ref={scrollRef} />
           </div>
 
-          <form onSubmit={sendMessage} className="p-4 lg:p-8 border-t border-zinc-900 bg-black/90">
-            <div className="flex items-center gap-4">
-               <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} disabled={isCooldown} placeholder={isCooldown ? "TRANSMITTING..." : `INPUT SIGNAL...`} className="flex-1 bg-transparent outline-none text-sm text-emerald-400 font-bold placeholder:text-zinc-900 uppercase" />
-               <button type="submit" className="lg:hidden p-2 bg-emerald-500 rounded text-black shadow-[0_0_10px_rgba(16,185,129,0.5)]"><ChevronUp size={20}/></button>
-            </div>
-          </form>
+          <div className="p-4 lg:p-8 bg-gradient-to-t from-black via-black to-transparent">
+            <form onSubmit={sendMessage} className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-1.5 focus-within:border-emerald-500/50 transition-all">
+               <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} disabled={isCooldown} placeholder={isCooldown ? "TX..." : "INPUT SIGNAL..."} className="flex-1 bg-transparent py-3 text-sm text-white outline-none placeholder:text-zinc-800 uppercase font-bold" />
+               <button type="submit" className="p-2.5 bg-emerald-500 rounded-xl text-black active:scale-90 transition-transform"><ChevronUp size={20} strokeWidth={3}/></button>
+            </form>
+          </div>
         </main>
       </div>
 
-      {isSidebarOpen && <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 lg:hidden" onClick={() => setIsSidebarOpen(false)} />}
-      {toast && <div className="fixed bottom-24 left-1/2 -translate-x-1/2 lg:left-auto lg:right-10 lg:translate-x-0 bg-emerald-500 text-black px-6 py-3 text-[10px] font-black shadow-[0_0_30px_rgba(16,185,129,0.4)] z-[100] uppercase tracking-[0.3em]">[{toast}]</div>}
+      {toast && <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[100] bg-emerald-500 text-black px-6 py-3 rounded-full text-[10px] font-black uppercase tracking-[0.2em] shadow-xl animate-in fade-in slide-in-from-top-4 duration-300">[{toast}]</div>}
+      {isSidebarOpen && <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[75] lg:hidden" onClick={() => setIsSidebarOpen(false)} />}
     </div>
   );
 }
