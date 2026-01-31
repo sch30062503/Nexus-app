@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Heart } from "lucide-react";
+import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash } from "lucide-react";
 
 type District = { slug: string; name: string; min_score: number; description: string; last_activity?: string };
 type Profile = { id: string; email: string | null; username: string | null; signal_score: number | null; is_founder: boolean | null };
@@ -125,7 +125,7 @@ export default function DashboardPage() {
     if (!error) { triggerToast("IDENTITY ESTABLISHED"); setProfile(prev => prev ? { ...prev, username: newUsername } : null); setNewUsername(""); }
   };
 
-  // TOUCH GESTURE: SIDEBAR
+  // TOUCH GESTURE: SIDEBAR (2-FINGER)
   const onTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
       touchEnd.current = null;
@@ -142,8 +142,7 @@ export default function DashboardPage() {
   // DOUBLE TAP TO LIKE
   const handleDoubleTap = async (targetUserId: string) => {
     const now = Date.now();
-    const DOUBLE_TAP_DELAY = 300;
-    if (now - lastTap.current < DOUBLE_TAP_DELAY) {
+    if (now - lastTap.current < 300) {
       if (targetUserId === profile?.id) return triggerToast("CANNOT BOOST SELF");
       await supabase.rpc('increment_signal_score', { user_id: targetUserId, amount: 1 });
       triggerToast("SIGNAL BOOSTED +1");
@@ -206,18 +205,18 @@ export default function DashboardPage() {
       className={`h-[100dvh] flex flex-col font-mono transition-colors duration-1000 ${feverMode ? 'bg-[#1a0505]' : 'bg-[#050505]'} text-zinc-400 overflow-hidden select-none`}
     >
       
-      {/* 📱 HEADER (Room Persistence & Tap to Open) */}
+      {/* 📱 HEADER */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md z-[70]">
         <div className="flex items-center gap-4">
           <button onClick={() => setIsSidebarOpen(true)} className="p-1 text-emerald-500 lg:hidden active:scale-90 transition-transform"><Menu size={24} /></button>
           <div className="flex flex-col cursor-pointer" onClick={() => setIsSidebarOpen(true)}>
-            <span className="text-[9px] text-zinc-600 font-black tracking-tighter uppercase">Nexus_Terminal_v2</span>
+            <span className="text-[9px] text-zinc-600 font-black uppercase tracking-tighter">Nexus_Terminal</span>
             <span className="text-xs text-white font-black uppercase tracking-[0.2em] truncate max-w-[140px]">{activeDistrict?.name || "Initializing..."}</span>
           </div>
         </div>
         <div className="flex flex-col items-end">
           <span className="text-[9px] text-emerald-500 font-black animate-pulse uppercase tracking-tighter">● {onlineCount} Live</span>
-          <span className="text-[11px] text-zinc-300 font-black">{profile.signal_score?.toLocaleString()} <span className="text-[7px] text-zinc-600 uppercase">Pts</span></span>
+          <span className="text-[11px] text-zinc-300 font-black">{profile.signal_score?.toLocaleString()} <span className="text-[7px] text-zinc-600">Pts</span></span>
         </div>
       </div>
 
@@ -241,6 +240,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="p-6 flex-1 overflow-y-auto space-y-8 scrollbar-hide">
+            {/* Identity */}
             <div className="space-y-3">
               <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest">Update_ID</p>
               <div className="flex gap-2">
@@ -249,6 +249,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
+            {/* Districts */}
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Zones</p>
@@ -257,6 +258,10 @@ export default function DashboardPage() {
 
               {showSpawner && (
                 <div className="p-4 border border-amber-500/30 bg-amber-500/5 rounded-lg space-y-3">
+                  <p className="text-[8px] text-amber-500/60 font-black uppercase">Global_Intel:</p>
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {globalSubjects.map(s => <span key={s} className="text-[8px] bg-zinc-900 px-1 text-zinc-400 border border-zinc-800">{s}</span>)}
+                  </div>
                   <input placeholder="Name" className="w-full bg-black border border-white/10 p-2 text-[10px] rounded" onChange={e => setNewDist({...newDist, name: e.target.value})} />
                   <input placeholder="slug" className="w-full bg-black border border-white/10 p-2 text-[10px] rounded" onChange={e => setNewDist({...newDist, slug: e.target.value})} />
                   <input placeholder="Min Signal" type="number" className="w-full bg-black border border-white/10 p-2 text-[10px] rounded" onChange={e => setNewDist({...newDist, min: parseInt(e.target.value)})} />
@@ -279,6 +284,20 @@ export default function DashboardPage() {
                   );
                 })}
               </nav>
+            </div>
+
+            {/* RESTORED: TRENDING TAGS */}
+            <div className="space-y-4">
+              <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest flex items-center gap-2">
+                <Hash size={10} /> Active_Frequencies
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {trendingTags.length > 0 ? trendingTags.map(tag => (
+                  <button key={tag} onClick={() => {setFilterQuery(tag); setIsSidebarOpen(false);}} className="text-[10px] bg-emerald-500/5 border border-emerald-500/20 px-3 py-1 rounded text-emerald-500 font-bold hover:bg-emerald-500 hover:text-black transition-all">
+                    {tag}
+                  </button>
+                )) : <span className="text-[9px] italic text-zinc-800 tracking-widest uppercase">Waiting for signal...</span>}
+              </div>
             </div>
           </div>
 
@@ -316,6 +335,12 @@ export default function DashboardPage() {
           </div>
 
           <div className="p-4 lg:p-8 bg-gradient-to-t from-black via-black to-transparent">
+            {filterQuery && (
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[9px] text-emerald-500 font-black uppercase">Filtering by: {filterQuery}</span>
+                <button onClick={() => setFilterQuery("")} className="text-[9px] text-zinc-600 underline uppercase">Clear</button>
+              </div>
+            )}
             <form onSubmit={sendMessage} className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-1.5 focus-within:border-emerald-500/50 transition-all">
                <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} disabled={isCooldown} placeholder={isCooldown ? "TX..." : "INPUT SIGNAL..."} className="flex-1 bg-transparent py-3 text-sm text-white outline-none placeholder:text-zinc-800 uppercase font-bold" />
                <button type="submit" className="p-2.5 bg-emerald-500 rounded-xl text-black active:scale-90 transition-transform"><ChevronUp size={20} strokeWidth={3}/></button>
