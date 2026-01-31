@@ -29,6 +29,7 @@ export default function DashboardPage() {
   const [decree, setDecree] = useState("");
   const [isEditingDecree, setIsEditingDecree] = useState(false);
   const [onlineCount, setOnlineCount] = useState(1);
+  const [isCooldown, setIsCooldown] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,7 +43,6 @@ export default function DashboardPage() {
       const { data: decreeData } = await supabase.from("decrees").select("content").eq("id", 1).single();
       if (decreeData) setDecree(decreeData.content);
 
-      // Fetch initial messages
       const { data: msgData } = await supabase.from("messages").select("*, profiles(email)").order("created_at", { ascending: true }).limit(20);
       if (msgData) setMessages(msgData as any);
 
@@ -54,7 +54,6 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!profile) return;
 
-    // Presence & Realtime Channels
     const decreeChannel = supabase.channel("decree-updates")
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "decrees" }, 
         (payload) => setDecree(payload.new.content))
@@ -70,12 +69,10 @@ export default function DashboardPage() {
         (payload) => setMessages((prev) => prev.filter(m => m.id !== payload.old.id)))
       .subscribe();
 
-    // Presence Channel (Who is online)
     const presenceChannel = supabase.channel('online-users');
     presenceChannel
       .on('presence', { event: 'sync' }, () => {
-        const state = presenceChannel.presenceState();
-        setOnlineCount(Object.keys(state).length);
+        setOnlineCount(Object.keys(presenceChannel.presenceState()).length);
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
@@ -105,9 +102,25 @@ export default function DashboardPage() {
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || !profile) return;
-    await supabase.from("messages").insert({ content: newMessage, profile_id: profile.id, is_founder_msg: profile.is_founder });
+    if (!newMessage.trim() || !profile || isCooldown) return;
+
+    setIsCooldown(true);
+    const { error } = await supabase.from("messages").insert({ 
+      content: newMessage, 
+      profile_id: profile.id, 
+      is_founder_msg: profile.is_founder 
+    });
+
+    if (!error) {
+      const gainAmount = profile.is_founder ? 0 : 5;
+      if (gainAmount > 0) {
+        await supabase.rpc('increment_signal_score', { user_id: profile.id, amount: gainAmount });
+        setProfile(prev => prev ? { ...prev, signal_score: (prev.signal_score || 0) + gainAmount } : null);
+      }
+    }
+
     setNewMessage("");
+    setTimeout(() => setIsCooldown(false), 3000);
   };
 
   if (loading || !profile) return <div className="p-10 font-mono text-emerald-500 animate-pulse">Establishing Uplink...</div>;
@@ -145,7 +158,7 @@ export default function DashboardPage() {
             </div>
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
               <p className="text-[9px] uppercase text-zinc-500 mb-1">Signal Score</p>
-              <p className="text-xl text-emerald-400">{profile.signal_score}</p>
+              <p className="text-xl text-emerald-400">{profile.signal_score?.toLocaleString()}</p>
             </div>
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 flex items-center justify-between">
               <p className="text-[9px] uppercase text-zinc-500">Active Nodes</p>
@@ -157,10 +170,10 @@ export default function DashboardPage() {
           </div>
 
           <div className="md:col-span-2 flex flex-col h-[450px] border border-zinc-800 rounded-lg bg-zinc-900/20">
-            <div className="p-3 border-b border-zinc-800 bg-zinc-900/40 flex justify-between items-center">
+            <div className="p-3 border-b border-zinc-800 bg-zinc-900/40">
               <span className="text-[10px] uppercase tracking-widest text-zinc-500">Signal_Wall.log</span>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
               {messages.map((msg) => (
                 <div key={msg.id} className="group flex items-center justify-between text-xs">
                   <div>
@@ -170,7 +183,7 @@ export default function DashboardPage() {
                     <span className="ml-2 text-zinc-300">{msg.content}</span>
                   </div>
                   {profile.is_founder && (
-                    <button onClick={() => burnMessage(msg.id)} className="hidden group-hover:block text-[9px] text-red-500/50 hover:text-red-500 uppercase">
+                    <button onClick={() => burnMessage(msg.id)} className="hidden group-hover:block text-[9px] text-red-500/50 hover:text-red-500 uppercase tracking-tighter">
                       [Burn]
                     </button>
                   )}
@@ -179,7 +192,15 @@ export default function DashboardPage() {
               <div ref={scrollRef} />
             </div>
             <form onSubmit={sendMessage} className="p-3 border-t border-zinc-800 bg-zinc-900/40">
-              <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Broadcast a signal..." className="w-full bg-transparent border-none outline-none text-xs text-emerald-400" />
+              <input 
+                value={newMessage} 
+                onChange={(e) => setNewMessage(e.target.value)} 
+                disabled={isCooldown}
+                placeholder={isCooldown ? "RECHARGING SIGNAL..." : "Broadcast a signal..."} 
+                className={`w-full bg-transparent border-none outline-none text-xs transition-colors ${
+                  isCooldown ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-400'
+                }`} 
+              />
             </form>
           </div>
         </div>
