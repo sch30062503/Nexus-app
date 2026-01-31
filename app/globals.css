@@ -40,3 +40,46 @@ body {
     box-shadow: 0 0 36px rgba(16, 185, 129, 0.55);
   }
 }
+
+/* Modal shake on access denied */
+.nexus-modal-shake {
+  animation: nexus-shake 0.5s ease-in-out;
+}
+
+@keyframes nexus-shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-6px); }
+  20%, 40%, 60%, 80% { transform: translateX(6px); }
+}
+
+/* Founder backdoor — subtle glitch */
+.nexus-glitch {
+  animation: nexus-glitch 0.4s ease-out;
+}
+
+@keyframes nexus-glitch {
+  0%, 100% {
+    filter: none;
+    transform: translate(0, 0);
+  }
+  10% {
+    filter: hue-rotate(90deg);
+    transform: translate(-2px, 1px);
+  }
+  20% {
+    filter: hue-rotate(-90deg);
+    transform: translate(2px, -1px);
+  }
+  30% {
+    filter: none;
+    transform: translate(-1px, 0);
+  }
+  40% {
+    filter: hue-rotate(45deg);
+    transform: translate(1px, 1px);
+  }
+  50%, 60%, 70%, 80%, 90% {
+    filter: none;
+    transform: translate(0, 0);
+  }
+}
