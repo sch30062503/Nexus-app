@@ -52,7 +52,6 @@ export default function DashboardPage() {
     const { data: decreeData } = await supabase.from("decrees").select("content").eq("id", 1).single();
     if (decreeData) setDecree(decreeData.content);
     
-    // FIXED: Typed 'tag' as string to satisfy Vercel compiler
     const { data: allMsgs } = await supabase.from("messages").select("content").limit(200);
     if (allMsgs) {
       const counts: Record<string, number> = {};
@@ -76,7 +75,6 @@ export default function DashboardPage() {
     }
   };
 
-  // FIXED: Explicitly typed 'tag' here as well
   const extractTrendingTags = (msgs: Message[]) => {
     const counts: Record<string, number> = {};
     msgs.forEach(m => {
@@ -187,15 +185,31 @@ export default function DashboardPage() {
           )}
 
           <nav className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-            {districts.map((d) => (
-              <button key={d.slug} onClick={() => { setActiveDistrict(d); fetchDistrictMessages(d.slug); setFilterQuery(""); }} 
-                className={`w-full text-left p-4 border transition-all rounded ${activeDistrict?.slug === d.slug ? 'border-emerald-500 bg-emerald-500/5' : 'border-zinc-900 opacity-40 hover:opacity-100 hover:border-zinc-700'}`}>
-                <div className="flex justify-between items-center">
-                  <span className="text-[11px] font-black uppercase">{d.name}</span>
-                  <span className="text-[8px] text-zinc-800">SIG: {d.min_score}</span>
-                </div>
-              </button>
-            ))}
+            {districts.map((d) => {
+              // GATEKEEPER LOGIC: Locked if score too low, unless Founder
+              const isLocked = (profile.signal_score || 0) < d.min_score && !profile.is_founder;
+              
+              return (
+                <button key={d.slug} 
+                  disabled={isLocked}
+                  onClick={() => { setActiveDistrict(d); fetchDistrictMessages(d.slug); setFilterQuery(""); }} 
+                  className={`w-full text-left p-4 border transition-all rounded relative group
+                    ${activeDistrict?.slug === d.slug ? 'border-emerald-500 bg-emerald-500/5' : 'border-zinc-900'}
+                    ${isLocked ? 'opacity-30 cursor-not-allowed grayscale' : 'hover:border-zinc-700 opacity-100'}`}>
+                  <div className="flex justify-between items-center">
+                    <span className={`text-[11px] font-black uppercase ${isLocked ? 'blur-[2px]' : ''}`}>
+                      {isLocked ? "RESTRICTED_AREA" : d.name}
+                    </span>
+                    <span className="text-[8px] text-zinc-800">REQ: {d.min_score}</span>
+                  </div>
+                  {isLocked && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className="text-[7px] text-red-600 font-black tracking-widest bg-black px-1">LOCKED</span>
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </nav>
 
           <div className="p-4 border border-zinc-900 bg-black/40 rounded">
