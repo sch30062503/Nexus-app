@@ -10,7 +10,6 @@ import {
 export default function DashboardPage() {
   const router = useRouter();
   
-  // --- STATE ---
   const [profile, setProfile] = useState<any>(null);
   const [districts, setDistricts] = useState<any[]>([]);
   const [activeDistrict, setActiveDistrict] = useState<any>(null);
@@ -21,11 +20,9 @@ export default function DashboardPage() {
   const [activeHashtag, setActiveHashtag] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // --- DERIVED DATA ---
   const theLobby = useMemo(() => districts.find(d => d.slug === 'lobby'), [districts]);
   const nicheSectors = useMemo(() => districts.filter(d => !d.parent_slug && d.slug !== 'lobby'), [districts]);
 
-  // Weighted Mining Detection for UI
   const hasHashtag = useMemo(() => /#\w+/.test(newMessage), [newMessage]);
   const currentReward = hasHashtag || activeHashtag ? 5 : 3;
 
@@ -43,7 +40,6 @@ export default function DashboardPage() {
     return messages.filter(m => m.content.includes(activeHashtag));
   }, [messages, activeHashtag]);
 
-  // --- CORE LOGIC ---
   const loadNexus = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return router.replace("/");
@@ -72,14 +68,11 @@ export default function DashboardPage() {
     if (data) setMessages(data);
 
     const channel = supabase.channel(`room:${district.slug}`)
-      .on('postgres_changes', { 
-        event: 'INSERT', 
-        schema: 'public', 
-        table: 'messages', 
-        filter: `district_slug=eq.${district.slug}` 
-      }, 
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `district_slug=eq.${district.slug}` }, 
       async (payload) => {
-        const { data: userProfile } = await supabase.from("profiles").select("username, signal_score").eq("id", payload.new.user_id || payload.new.profile_id).single();
+        // Fallback for both naming conventions
+        const uid = payload.new.user_id || payload.new.profile_id;
+        const { data: userProfile } = await supabase.from("profiles").select("username, signal_score").eq("id", uid).single();
         const newMessageObj = { ...payload.new, profiles: userProfile };
         setMessages((prev) => [...prev, newMessageObj]);
       })
@@ -125,11 +118,10 @@ export default function DashboardPage() {
 
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
-      
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
         <button onClick={() => setView('admin')} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 border border-emerald-500/20 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'hover:text-white'}`}>
           <LayoutGrid size={16} />
-          <span className="text-xs font-black uppercase tracking-widest text-shadow-glow">Dashboard</span>
+          <span className="text-xs font-black uppercase tracking-widest">Dashboard</span>
         </button>
         <div className="w-[1px] h-6 bg-white/10" />
         <div className="flex items-center gap-6">
@@ -186,7 +178,6 @@ export default function DashboardPage() {
         ) : (
           <div className="h-full flex relative animate-in slide-in-from-bottom duration-500">
             <div className="flex-1 flex flex-col border-r border-white/5 relative bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:40px_40px]">
-              
               <div className="px-8 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <Radio className="text-blue-400 animate-pulse" size={14} />
@@ -196,7 +187,6 @@ export default function DashboardPage() {
                   <button onClick={() => setActiveHashtag(null)} className="text-[8px] flex items-center gap-1 text-zinc-500 hover:text-white uppercase font-black"><X size={10} /> Clear Filter</button>
                 )}
               </div>
-
               <div className="flex-1 overflow-y-auto scrollbar-hide">
                 <div className="max-w-2xl mx-auto p-8 space-y-8">
                   {filteredMessages.map((m) => (
@@ -213,7 +203,6 @@ export default function DashboardPage() {
                   <div ref={scrollRef} />
                 </div>
               </div>
-
               <div className="p-8 border-t border-white/5 bg-black">
                 <form onSubmit={transmitSignal} className="max-w-2xl mx-auto">
                   <div className="relative flex items-center bg-white/5 border border-white/10 rounded-sm focus-within:border-emerald-500/50 transition-all overflow-hidden">
@@ -221,8 +210,6 @@ export default function DashboardPage() {
                     <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder={activeHashtag ? `Mining in ${activeHashtag}...` : "TRANSMIT_SIGNAL..."} className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase tracking-widest placeholder:text-zinc-800" />
                     <button type="submit" className="px-8 bg-zinc-900 border-l border-white/10 text-emerald-500 font-black text-xs uppercase hover:bg-emerald-500 hover:text-black transition-all">Broadcast</button>
                   </div>
-                  
-                  {/* RESTORED VISUAL FEEDBACK */}
                   <div className="flex justify-between mt-2">
                     <p className={`text-[8px] uppercase font-black transition-all duration-300 ${currentReward === 5 ? 'text-emerald-400 animate-pulse' : 'text-zinc-700'}`}>
                       {currentReward === 5 ? '>>> HIGH_VALUE_SIGNAL_DETECTED' : '>>> STANDARD_SIGNAL_PROTOCOL'}
@@ -234,7 +221,6 @@ export default function DashboardPage() {
                 </form>
               </div>
             </div>
-
             <aside className="w-80 bg-black p-6 flex flex-col gap-8">
               <div className="space-y-4">
                 <div className="flex items-center gap-2 text-emerald-500"><TrendingUp size={16} /><h3 className="text-[11px] font-black uppercase tracking-widest">Trending_Signals</h3></div>
@@ -247,19 +233,11 @@ export default function DashboardPage() {
                   ))}
                 </div>
               </div>
-
-              {/* RESTORED SIDEBAR PROTOCOL INFO */}
               <div className="mt-auto p-4 border border-blue-500/20 rounded bg-blue-500/[0.02]">
                 <p className="text-[9px] font-black text-blue-400 uppercase mb-2">Mining Protocol</p>
                 <div className="space-y-1 text-[9px] uppercase font-bold">
-                  <div className="flex justify-between">
-                    <span className="text-zinc-500">Generic Chat</span>
-                    <span className="text-zinc-300">3 SP</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-emerald-500">Hashtag Tagged</span>
-                    <span className="text-emerald-500">5 SP</span>
-                  </div>
+                  <div className="flex justify-between"><span className="text-zinc-500">Generic Chat</span><span className="text-zinc-300">3 SP</span></div>
+                  <div className="flex justify-between"><span className="text-emerald-500">Hashtag Tagged</span><span className="text-emerald-500">5 SP</span></div>
                 </div>
               </div>
             </aside>
