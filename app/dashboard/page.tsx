@@ -173,25 +173,43 @@ export default function DashboardPage() {
 
   useEffect(() => { loadNexus(); }, []);
 
-  // Presence Listener Loop
+  // --- UPDATED PRESENCE LOOP (FIXED GHOSTING) ---
   useEffect(() => {
     if (!profile || districts.length === 0) return;
+
+    const activeChannels: any[] = [];
+
     districts.forEach(district => {
       const channel = supabase.channel(`presence:${district.slug}`, {
         config: { presence: { key: profile.id } }
       });
+
       channel
         .on('presence', { event: 'sync' }, () => {
           const state = channel.presenceState();
           setPresenceCounts(prev => ({ ...prev, [district.slug]: Object.keys(state).length }));
         })
         .subscribe(async (status) => {
-          if (status === 'SUBSCRIBED' && activeDistrict?.slug === district.slug) {
-            await channel.track({ online_at: new Date().toISOString() });
+          if (status === 'SUBSCRIBED') {
+            // Only track presence if this is the active room
+            if (activeDistrict?.slug === district.slug) {
+              await channel.track({ online_at: new Date().toISOString() });
+            } else {
+              // Ensure we aren't tracked in rooms we aren't viewing
+              await channel.untrack();
+            }
           }
         });
+      
+      activeChannels.push(channel);
     });
-    return () => { supabase.removeAllChannels(); };
+
+    return () => {
+      activeChannels.forEach(ch => {
+        ch.untrack();
+        supabase.removeChannel(ch);
+      });
+    };
   }, [districts, profile, activeDistrict?.slug]);
 
   useEffect(() => {
@@ -280,8 +298,6 @@ export default function DashboardPage() {
             </button>
         </div>
 
-        {/* UPDATED: Presence + Count integration */}
-        
         <div className="flex items-center gap-2 px-4 pb-3 overflow-x-auto no-scrollbar scroll-smooth">
             {districts.map((d) => {
                 const isLocked = (profile.signal_score || 0) < d.min_score;
