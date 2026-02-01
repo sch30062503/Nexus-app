@@ -35,7 +35,6 @@ export default function DashboardPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [trendingTags, setTrendingTags] = useState<string[]>([]);
   
-  // --- NEW: FREQUENCY & FILTER STATES ---
   const [activeFrequency, setActiveFrequency] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState(""); 
   
@@ -58,7 +57,7 @@ export default function DashboardPage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // --- NEW: LOGIC - FREQUENCY POPULATION & HEATMAP ---
+  // --- LOGIC: FREQUENCY HEATMAP ---
   const frequencyMap = useMemo(() => {
     const counts: Record<string, number> = {};
     messages.forEach(m => {
@@ -71,7 +70,7 @@ export default function DashboardPage() {
     return counts;
   }, [messages]);
 
-  // --- NEW: LOGIC - FILTERED MESSAGES (Combines Frequency Tuning + Search) ---
+  // --- LOGIC: MESSAGE FILTERING ---
   const filteredMessages = useMemo(() => {
     return messages.filter(m => {
       const content = m.content.toUpperCase();
@@ -81,7 +80,18 @@ export default function DashboardPage() {
     });
   }, [messages, filterQuery, activeFrequency]);
 
-  // --- FEVER MODE REALTIME SYNC ---
+  // --- LOGIC: DOUBLE TAP RESTORED ---
+  const handleDoubleTap = async (targetUserId: string) => {
+    const now = Date.now();
+    if (now - lastTap.current < 300) {
+      if (targetUserId === profile?.id) return triggerToast("CANNOT_BOOST_SELF");
+      await supabase.rpc('increment_signal_with_dividend', { user_id: targetUserId, amount: 1 });
+      triggerToast("SIGNAL_BOOSTED");
+    }
+    lastTap.current = now;
+  };
+
+  // --- FEVER MODE SYNC ---
   useEffect(() => {
     const fetchFeverState = async () => {
       const { data } = await supabase.from('system_settings').select('value').eq('key', 'fever_mode').single();
@@ -130,20 +140,16 @@ export default function DashboardPage() {
     if (!error) { triggerToast("SIGNAL_BROADCASTED"); setShowMegaModal(false); loadNexus(); }
   };
 
-  // --- MESSAGING WITH AUTO-FREQUENCY ---
+  // --- MESSAGING ---
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !profile || isCooldown || !activeDistrict) return;
-
     let content = newMessage;
-    // Auto-tag with frequency if user is tuned in
     if (activeFrequency && !content.toUpperCase().includes(`#${activeFrequency}`)) {
       content = `${newMessage} #${activeFrequency}`;
     }
-
     setIsCooldown(true);
     await supabase.from("messages").insert({ content, profile_id: profile.id, district_slug: activeDistrict.slug, is_founder_msg: profile.is_founder });
-    
     if (!profile.is_founder) {
       const points = feverMode ? 10 : 5;
       await supabase.rpc('increment_signal_with_dividend', { user_id: profile.id, amount: points });
@@ -152,7 +158,7 @@ export default function DashboardPage() {
     setTimeout(() => setIsCooldown(false), 800);
   };
 
-  // --- CORE LOADING ---
+  // --- CORE DATA ---
   const loadNexus = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return router.replace("/");
@@ -227,7 +233,6 @@ export default function DashboardPage() {
 
           <div className="p-6 flex-1 overflow-y-auto space-y-8 scrollbar-hide">
             
-            {/* ⚡ FOUNDER TRIGGER */}
             {profile?.is_founder && (
               <div className="p-4 border border-orange-500/50 bg-orange-500/5 rounded-xl space-y-3">
                 <p className="text-[10px] text-orange-500 font-black uppercase flex items-center gap-2"><ShieldAlert size={12}/> System_Override</p>
@@ -237,7 +242,7 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* 📡 FREQUENCY TUNER (DYNAMIC FILTER) */}
+            {/* 📡 FREQUENCY TUNER */}
             <div className="p-4 border border-blue-500/30 bg-blue-500/5 rounded-xl space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-[10px] text-blue-400 font-black uppercase flex items-center gap-2"><Target size={12} /> Frequency_Tuner</p>
@@ -263,7 +268,7 @@ export default function DashboardPage() {
                     <span className="text-[9px] font-bold text-zinc-400 group-hover:text-blue-400">{tag}</span>
                     <div className="flex items-center gap-2">
                       {count > 5 && <Flame size={10} className="text-orange-500 animate-pulse" />}
-                      <span className="text-[8px] font-black px-1.5 py-0.5 bg-zinc-900 rounded text-emerald-500">{count} Signals</span>
+                      <span className="text-[8px] font-black px-1.5 py-0.5 bg-zinc-900 rounded text-emerald-500">{count}</span>
                     </div>
                   </button>
                 ))}
@@ -288,14 +293,6 @@ export default function DashboardPage() {
                     </button>
                 ))}
             </div>
-
-            {/* RECRUITMENT */}
-            <div className="p-4 border border-white/5 bg-white/5 rounded-xl space-y-3">
-              <p className="text-[10px] text-zinc-600 font-black uppercase flex items-center gap-2"><Share2 size={10}/> Recruitment</p>
-              <button onClick={copyReferral} className={`w-full p-3 text-[10px] font-black uppercase border transition-all rounded-lg flex items-center justify-center gap-2 ${copied ? 'bg-emerald-500 text-black' : 'bg-zinc-900 text-white'}`}>
-                {copied ? "LINK_COPIED" : `ID: ${profile.referral_code?.toUpperCase() || '...'}`}
-              </button>
-            </div>
           </div>
         </aside>
 
@@ -304,7 +301,6 @@ export default function DashboardPage() {
           <div className="flex-1 overflow-y-auto p-4 lg:p-10 space-y-6 scrollbar-hide">
             {showLeaderboard ? <Leaderboard /> : (
               <>
-                {/* ACTIVE FILTER OVERLAY */}
                 {(activeFrequency || filterQuery) && (
                   <div className="flex items-center justify-between bg-blue-500/10 border border-blue-500/30 p-2 rounded-lg mb-4">
                     <span className="text-[10px] text-blue-500 font-black uppercase flex items-center gap-2">
@@ -316,7 +312,6 @@ export default function DashboardPage() {
                 )}
                 
                 {filteredMessages.map((msg) => {
-                  // Check if this specific message contains a "Hot" hashtag
                   const hasHotTag = msg.content.match(/#\w+/g)?.some(tag => frequencyMap[tag.toUpperCase()] > 5);
                   return (
                     <div key={msg.id} onClick={() => handleDoubleTap(msg.profile_id)} className={`flex flex-col gap-1 max-w-[95%] cursor-pointer group transition-all`}>
@@ -347,7 +342,7 @@ export default function DashboardPage() {
         </main>
       </div>
 
-      {/* MEGAPHONE MODAL */}
+      {/* MODAL & TOAST */}
       {showMegaModal && (
         <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4">
           <div className="w-full max-w-md border border-emerald-500/30 bg-zinc-950 p-6 rounded-2xl space-y-6">
@@ -361,7 +356,6 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-
       {toast && <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[120] bg-emerald-500 text-black px-4 py-2 rounded text-[10px] font-black uppercase shadow-xl">{toast}</div>}
     </div>
   );
