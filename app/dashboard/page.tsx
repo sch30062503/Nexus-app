@@ -28,11 +28,10 @@ export default function DashboardPage() {
   
   const isFinanceSector = activeDistrict?.slug === 'finance' || activeDistrict?.slug.startsWith('finance-');
   
-  // High-value signal detection for the green flash
   const hasHashtag = useMemo(() => /#\w+/.test(newMessage), [newMessage]);
   const currentReward = hasHashtag || activeHashtag ? 5 : 3;
 
-  // FIXED: Localized Trending (Only shows tags for the CURRENT district)
+  // Localized Trending
   const localizedTrending = useMemo(() => {
     const counts: Record<string, number> = {};
     messages.forEach(m => {
@@ -42,6 +41,7 @@ export default function DashboardPage() {
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
   }, [messages]);
 
+  // Filtered Message Stream
   const filteredMessages = useMemo(() => {
     if (!activeHashtag) return messages;
     return messages.filter(m => m.content.includes(activeHashtag));
@@ -63,9 +63,10 @@ export default function DashboardPage() {
   };
 
   const enterRoom = async (district: any) => {
+    // CRITICAL FIX: Reset filter immediately on room entry to prevent "tag bleed"
+    setActiveHashtag(null);
     setView('chat');
     setActiveDistrict(district);
-    setActiveHashtag(null); // Reset filter when switching rooms
     
     const { data } = await supabase.from("messages")
       .select("*, profiles(username, signal_score)")
@@ -119,14 +120,21 @@ export default function DashboardPage() {
   useEffect(() => { loadNexus(); }, []);
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [filteredMessages]);
 
-  if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center font-mono text-emerald-500 animate-pulse text-[10px]">SYNCING_RESOURCES...</div>;
+  if (loading || !profile) return (
+    <div className="h-screen bg-black flex items-center justify-center font-mono text-emerald-500 animate-pulse text-[10px]">
+      SYNCING_RESOURCES...
+    </div>
+  );
 
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
       
       {/* NAV BAR */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
-        <button onClick={() => setView('admin')} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 border border-emerald-500/20 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'hover:text-white'}`}>
+        <button 
+          onClick={() => { setView('admin'); setActiveHashtag(null); }} 
+          className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 border border-emerald-500/20 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'hover:text-white'}`}
+        >
           <LayoutGrid size={16} />
           <span className="text-xs font-black uppercase tracking-widest">Dashboard</span>
         </button>
@@ -135,7 +143,10 @@ export default function DashboardPage() {
 
         <div className="flex items-center gap-6">
           {theLobby && (
-            <button onClick={() => enterRoom(theLobby)} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${activeDistrict?.slug === 'lobby' && view === 'chat' ? 'text-blue-400 border border-blue-400/20 bg-blue-400/5 shadow-[0_0_10px_rgba(96,165,250,0.1)]' : 'hover:text-white'}`}>
+            <button 
+              onClick={() => enterRoom(theLobby)} 
+              className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${activeDistrict?.slug === 'lobby' && view === 'chat' ? 'text-blue-400 border border-blue-400/20 bg-blue-400/5 shadow-[0_0_10px_rgba(96,165,250,0.1)]' : 'hover:text-white'}`}
+            >
               <Globe size={16} />
               <span className="text-xs font-black uppercase tracking-widest">The_Lobby</span>
             </button>
@@ -144,7 +155,12 @@ export default function DashboardPage() {
           {mainHubs.map(n => {
             const isLocked = profile.signal_score < n.min_score;
             return (
-              <button key={n.slug} disabled={isLocked} onClick={() => enterRoom(n)} className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all ${isLocked ? 'text-zinc-800' : 'text-zinc-600 hover:text-white'} ${activeDistrict?.slug === n.slug && view === 'chat' ? 'text-emerald-400' : ''}`}>
+              <button 
+                key={n.slug} 
+                disabled={isLocked} 
+                onClick={() => enterRoom(n)} 
+                className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all ${isLocked ? 'text-zinc-800' : 'text-zinc-600 hover:text-white'} ${activeDistrict?.slug === n.slug && view === 'chat' ? 'text-emerald-400' : ''}`}
+              >
                 {isLocked && <Lock size={10} />} {n.name}
               </button>
             );
@@ -160,7 +176,7 @@ export default function DashboardPage() {
       <main className="flex-1 overflow-hidden bg-[#020202]">
         {view === 'admin' ? (
           /* DASHBOARD (REMAINS UNCHANGED) */
-          <div className="h-full max-w-6xl mx-auto p-12 space-y-12">
+          <div className="h-full max-w-6xl mx-auto p-12 space-y-12 overflow-y-auto">
             <header className="border-b border-white/5 pb-10">
               <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em]">Node_Operator</p>
               <h2 className="text-4xl font-black text-white uppercase tracking-tighter">{profile.username}</h2>
@@ -198,7 +214,12 @@ export default function DashboardPage() {
                     const isLocked = (profile.finance_xp || 0) < tier.min_score;
                     const progress = Math.min(100, ((profile.finance_xp || 0) / tier.min_score) * 100);
                     return (
-                      <button key={tier.slug} disabled={isLocked} onClick={() => enterRoom(tier)} className={`text-left p-3 rounded border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400' : isLocked ? 'border-zinc-900 text-zinc-800' : 'border-white/5 text-zinc-600 hover:text-white'}`}>
+                      <button 
+                        key={tier.slug} 
+                        disabled={isLocked} 
+                        onClick={() => enterRoom(tier)} 
+                        className={`text-left p-3 rounded border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400' : isLocked ? 'border-zinc-900 text-zinc-800' : 'border-white/5 text-zinc-600 hover:text-white'}`}
+                      >
                         <div className="flex justify-between items-center mb-1"><span className="text-[9px] font-bold uppercase truncate">{tier.name}</span>{isLocked && <Lock size={8} />}</div>
                         <div className="h-1 w-full bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 transition-all duration-1000" style={{ width: `${progress}%` }} /></div>
                       </button>
@@ -210,12 +231,11 @@ export default function DashboardPage() {
 
             <div className="flex-1 flex flex-col relative bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:40px_40px]">
               
-              <div className="px-8 py-3 border-b border-white/5 bg-black/80 flex items-center justify-between z-10">
+              <div className="px-8 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md flex items-center justify-between z-10">
                 <div className="flex items-center gap-3">
                   {isFinanceSector ? <DollarSign className="text-emerald-500" size={14} /> : <Radio className="text-blue-400" size={14} />}
-                  <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">{activeDistrict.name}</span>
+                  <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">{activeDistrict?.name}</span>
                 </div>
-                {/* RESTORED: Clear Filter Button */}
                 {activeHashtag && (
                   <button onClick={() => setActiveHashtag(null)} className="text-[9px] flex items-center gap-1.5 text-emerald-500 hover:text-white uppercase font-black animate-pulse">
                     <X size={12} /> Clear_Filter [{activeHashtag}]
@@ -226,13 +246,13 @@ export default function DashboardPage() {
               <div className="flex-1 overflow-y-auto scrollbar-hide">
                 <div className="max-w-2xl mx-auto p-8 space-y-8">
                   {filteredMessages.map((m) => (
-                    <div key={m.id} className="flex flex-col gap-1.5">
+                    <div key={m.id} className="flex flex-col gap-1.5 animate-in fade-in">
                       <div className="flex items-center gap-2 opacity-50">
                         <span className="text-[10px] font-black uppercase text-white">{m.profiles?.username}</span>
                         <span className="text-[8px] font-bold">[{m.profiles?.signal_score}]</span>
                       </div>
                       <div className={`bg-white/[0.02] border-l p-4 ${isFinanceSector ? 'border-emerald-500/20' : 'border-white/10'}`}>
-                        <p className="text-[15px] text-zinc-300 leading-relaxed">{m.content}</p>
+                        <p className="text-[15px] text-zinc-300 leading-relaxed font-medium">{m.content}</p>
                       </div>
                     </div>
                   ))}
@@ -243,10 +263,9 @@ export default function DashboardPage() {
               <div className="p-8 border-t border-white/5 bg-black">
                 <form onSubmit={transmitSignal} className="max-w-2xl mx-auto">
                   <div className={`flex items-center bg-white/5 border rounded-sm transition-all ${isFinanceSector ? 'border-emerald-500/20 focus-within:border-emerald-500' : 'border-white/10 focus-within:border-emerald-500/50'}`}>
-                    <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase" placeholder="TRANSMIT_SIGNAL..." />
-                    <button type="submit" className="px-8 h-full bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black">Broadcast</button>
+                    <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase tracking-widest placeholder:text-zinc-800" placeholder="TRANSMIT_SIGNAL..." />
+                    <button type="submit" className="px-8 h-full bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black transition-all">Broadcast</button>
                   </div>
-                  {/* RESTORED: Flashing Reward UI */}
                   <div className="flex justify-between mt-2 px-1">
                     <p className={`text-[8px] uppercase font-black transition-all duration-300 ${hasHashtag ? 'text-emerald-400 animate-pulse' : 'text-zinc-700'}`}>
                       {hasHashtag ? '>>> HIGH_VALUE_INTEL_DETECTED' : '>>> STANDARD_SIGNAL'}
