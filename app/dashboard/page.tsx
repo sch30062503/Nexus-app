@@ -3,7 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { LayoutGrid, Lock, Globe, ChevronUp, Wallet, BarChart3, Activity } from "lucide-react";
+import { 
+  LayoutGrid, Lock, Globe, ChevronUp, Wallet, BarChart3, 
+  Layers, SlidersHorizontal, ShieldCheck, Zap 
+} from "lucide-react";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -13,17 +16,21 @@ export default function DashboardPage() {
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [view, setView] = useState<'admin' | 'chat'>('admin');
+  const [noiseThreshold, setNoiseThreshold] = useState(0); // The "Tuner" state
   const [loading, setLoading] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Separate Lobby from Niches
   const theLobby = useMemo(() => districts.find(d => d.slug === 'lobby'), [districts]);
   const niches = useMemo(() => districts.filter(d => d.slug !== 'lobby' && !d.parent_slug), [districts]);
+  
+  // Sidebar logic: Find sub-tiers for the current niche
+  const currentTiers = useMemo(() => {
+    if (!activeDistrict || activeDistrict.slug === 'lobby') return [];
+    const parentSlug = activeDistrict.parent_slug || activeDistrict.slug;
+    return districts.filter(d => d.parent_slug === parentSlug);
+  }, [activeDistrict, districts]);
 
-  // Is a Niche active? (Determines if sidebar shows)
-  const isNicheActive = useMemo(() => 
-    view === 'chat' && activeDistrict && activeDistrict.slug !== 'lobby'
-  , [view, activeDistrict]);
+  const isNicheActive = useMemo(() => view === 'chat' && activeDistrict?.slug !== 'lobby', [view, activeDistrict]);
 
   const loadData = async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -52,11 +59,10 @@ export default function DashboardPage() {
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
       
-      {/* TOP BAR */}
+      {/* TOP NAVIGATION */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
         <button onClick={() => setView('admin')} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 border border-emerald-500/20 bg-emerald-500/5' : 'hover:text-white'}`}>
-          <LayoutGrid size={16} />
-          <span className="text-xs font-black uppercase tracking-widest">Dashboard</span>
+          <LayoutGrid size={16} /> <span className="text-xs font-black uppercase tracking-widest">Dashboard</span>
         </button>
 
         <div className="w-[1px] h-6 bg-white/10" />
@@ -64,14 +70,14 @@ export default function DashboardPage() {
         <div className="flex items-center gap-6">
           {theLobby && (
             <button onClick={() => enterRoom(theLobby)} className={`flex items-center gap-2 px-4 py-2 rounded text-xs font-black uppercase tracking-widest transition-all ${activeDistrict?.slug === 'lobby' && view === 'chat' ? 'text-blue-400 border border-blue-400/20 bg-blue-400/5' : 'hover:text-white'}`}>
-              <Globe size={16} /> The_Lobby
+              <Globe size={16} /> Lobby
             </button>
           )}
 
           {niches.map(n => {
             const locked = profile.signal_score < n.min_score;
             return (
-              <button key={n.slug} disabled={locked} onClick={() => enterRoom(n)} className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all ${view === 'chat' && activeDistrict?.slug === n.slug ? 'text-white underline underline-offset-8 decoration-emerald-500' : locked ? 'text-zinc-800' : 'text-zinc-600 hover:text-white'}`}>
+              <button key={n.slug} disabled={locked} onClick={() => enterRoom(n)} className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all ${view === 'chat' && (activeDistrict?.slug === n.slug || activeDistrict?.parent_slug === n.slug) ? 'text-white border-b-2 border-emerald-500 pb-1' : locked ? 'text-zinc-800' : 'text-zinc-600 hover:text-white'}`}>
                 {locked && <Lock size={10} />} {n.name}
               </button>
             );
@@ -80,47 +86,84 @@ export default function DashboardPage() {
       </nav>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* SIDEBAR - ONLY FOR NICHES */}
+        
+        {/* TIERED SIDEBAR (NICHE ONLY) */}
         {isNicheActive && (
-          <aside className="w-64 border-r border-white/5 bg-black p-6 flex flex-col animate-in slide-in-from-left duration-300">
-            <h2 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-6">{activeDistrict.name} Status</h2>
-            <div className="space-y-4">
-              <div className="p-3 bg-white/5 border border-white/10 rounded">
-                <p className="text-[8px] text-zinc-500 uppercase mb-1">Local Signal</p>
-                <p className="text-white text-xs font-black">{profile.signal_score.toLocaleString()} SP</p>
-              </div>
+          <aside className="w-64 border-r border-white/5 bg-black p-6 flex flex-col animate-in slide-in-from-left">
+            <h2 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-8 flex items-center gap-2">
+              <Layers size={14} /> Available_Tiers
+            </h2>
+            <div className="space-y-3">
+              {currentTiers.map(tier => {
+                const isTierLocked = profile.signal_score < tier.min_score;
+                return (
+                  <button 
+                    key={tier.slug}
+                    disabled={isTierLocked}
+                    onClick={() => enterRoom(tier)}
+                    className={`w-full flex items-center justify-between p-3 rounded border transition-all 
+                      ${activeDistrict.slug === tier.slug ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-white/[0.02] border-white/5 text-zinc-500 hover:text-white'}`}
+                  >
+                    <span className="text-[10px] font-black uppercase tracking-tighter">{tier.name}</span>
+                    {isTierLocked ? <Lock size={12} className="text-zinc-800" /> : <Zap size={12} className="text-emerald-500 shadow-glow" />}
+                  </button>
+                );
+              })}
             </div>
           </aside>
         )}
 
-        {/* MAIN AREA */}
-        <main className="flex-1 overflow-y-auto bg-[#020202]">
+        {/* MAIN TERMINAL */}
+        <main className="flex-1 overflow-y-auto bg-[#020202] flex flex-col">
           {view === 'admin' ? (
-            <div className="max-w-4xl mx-auto p-12 space-y-8">
-              <h1 className="text-2xl font-black text-white uppercase tracking-tighter">Admin_Panel</h1>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="p-6 bg-zinc-900/30 border border-white/5 rounded-lg">
-                  <Wallet className="text-emerald-500 mb-2" size={24} />
-                  <p className="text-[10px] text-zinc-500 uppercase">Spendable Balance</p>
-                  <p className="text-xl font-black text-white">{profile.signal_to_spend}</p>
+            /* DASHBOARD VIEW */
+            <div className="max-w-4xl mx-auto p-12 space-y-12">
+               <h1 className="text-2xl font-black text-white uppercase tracking-tighter">Admin_Control</h1>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="p-8 bg-zinc-900/20 border border-white/5 rounded-lg">
+                  <Wallet className="text-emerald-500 mb-4" size={24} />
+                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Spendable Signal</p>
+                  <p className="text-3xl font-black text-white">{profile.signal_to_spend}</p>
                 </div>
               </div>
             </div>
           ) : (
+            /* CHAT VIEW WITH TUNER */
             <div className="h-full flex flex-col">
-              <div className="flex-1 p-8 overflow-y-auto space-y-6">
-                {messages.map((m) => (
-                  <div key={m.id} className="max-w-3xl">
+              {/* THE TUNER HUD */}
+              <div className="px-8 py-3 bg-black border-b border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <SlidersHorizontal size={14} className="text-zinc-600" />
+                  <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Frequency_Tuner</span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <span className="text-[8px] font-bold text-zinc-800">NOISE_FILTER</span>
+                  <input 
+                    type="range" min="0" max="5000" step="500" 
+                    value={noiseThreshold}
+                    onChange={(e) => setNoiseThreshold(parseInt(e.target.value))}
+                    className="w-32 accent-emerald-500 h-1 bg-zinc-900 rounded-full appearance-none cursor-pointer"
+                  />
+                  <span className="text-[9px] font-black text-emerald-500 tabular-nums">{noiseThreshold} SP</span>
+                </div>
+              </div>
+
+              {/* MESSAGES */}
+              <div className="flex-1 p-8 overflow-y-auto space-y-8 scrollbar-hide">
+                {messages.filter(m => (m.profiles?.signal_score || 0) >= noiseThreshold).map((m) => (
+                  <div key={m.id} className="max-w-3xl animate-in fade-in slide-in-from-bottom-2">
                     <p className="text-[9px] font-black text-zinc-600 uppercase mb-1">{m.profiles?.username} • {m.profiles?.signal_score}</p>
-                    <p className="text-sm text-zinc-300">{m.content}</p>
+                    <p className="text-[15px] text-zinc-300 leading-relaxed">{m.content}</p>
                   </div>
                 ))}
                 <div ref={scrollRef} />
               </div>
-              <div className="p-8">
-                <form className="max-w-3xl flex bg-white/5 border border-white/10 rounded overflow-hidden">
-                  <input className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase" placeholder="TRANSMIT..." />
-                  <button className="px-6 text-emerald-500 font-black text-xs uppercase">Send</button>
+
+              {/* BROADCAST INPUT */}
+              <div className="p-8 border-t border-white/5">
+                <form className="max-w-3xl mx-auto flex bg-white/5 border border-white/10 rounded overflow-hidden">
+                  <input className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase placeholder:text-zinc-900" placeholder={`TRANSMIT_TO_${activeDistrict?.name?.toUpperCase()}...`} />
+                  <button className="px-8 text-emerald-500 font-black text-xs uppercase hover:bg-emerald-500 hover:text-black transition-all">Broadcast</button>
                 </form>
               </div>
             </div>
