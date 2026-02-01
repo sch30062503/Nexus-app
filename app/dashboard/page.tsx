@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
-  LayoutGrid, Lock, Globe, ChevronUp, Wallet, BarChart3, Activity, Hash, Zap, Radio 
+  LayoutGrid, Lock, Globe, ChevronUp, Wallet, BarChart3, Activity, Hash, Zap, Radio, TrendingUp, X 
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -18,11 +18,27 @@ export default function DashboardPage() {
   const [newMessage, setNewMessage] = useState("");
   const [view, setView] = useState<'admin' | 'chat'>('admin');
   const [loading, setLoading] = useState(true);
+  const [activeHashtag, setActiveHashtag] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // --- NAVIGATION CATEGORIES ---
   const theLobby = useMemo(() => districts.find(d => d.slug === 'lobby'), [districts]);
   const nicheSectors = useMemo(() => districts.filter(d => !d.parent_slug && d.slug !== 'lobby'), [districts]);
+
+  // --- TRENDING HASHTAGS LOGIC ---
+  const trendingTags = useMemo(() => {
+    const counts: Record<string, number> = {};
+    messages.forEach(m => {
+      const tags = m.content.match(/#\w+/g);
+      if (tags) tags.forEach((t: string) => counts[t] = (counts[t] || 0) + 1);
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  }, [messages]);
+
+  const filteredMessages = useMemo(() => {
+    if (!activeHashtag) return messages;
+    return messages.filter(m => m.content.includes(activeHashtag));
+  }, [messages, activeHashtag]);
 
   // --- CORE DATA LOADING ---
   const loadNexus = async () => {
@@ -43,17 +59,16 @@ export default function DashboardPage() {
   const enterRoom = async (district: any) => {
     setView('chat');
     setActiveDistrict(district);
+    setActiveHashtag(null);
     
-    // Fetch initial messages
     const { data } = await supabase.from("messages")
       .select("*, profiles(username, signal_score)")
       .eq("district_slug", district.slug)
       .order("created_at", { ascending: true })
-      .limit(50);
+      .limit(100);
     
     if (data) setMessages(data);
 
-    // Setup Realtime Subscription
     const channel = supabase.channel(`room:${district.slug}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `district_slug=eq.${district.slug}` }, 
       async (payload) => {
@@ -70,23 +85,27 @@ export default function DashboardPage() {
     e.preventDefault();
     if (!newMessage.trim() || !profile || !activeDistrict) return;
 
-    // Use RPC to submit signal and earn points
+    // Auto-append active hashtag if set
+    let finalContent = newMessage;
+    if (activeHashtag && !finalContent.includes(activeHashtag)) {
+      finalContent = `${finalContent} ${activeHashtag}`;
+    }
+
     const { error } = await supabase.rpc('submit_signal', {
       user_id: profile.id,
-      signal_content: newMessage,
+      signal_content: finalContent,
       target_hub: activeDistrict.slug
     });
 
     if (!error) {
       setNewMessage("");
-      // Refresh profile to update score after mining
       const { data } = await supabase.from("profiles").select("*").eq("id", profile.id).single();
       if (data) setProfile(data);
     }
   };
 
   useEffect(() => { loadNexus(); }, []);
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [filteredMessages]);
 
   if (loading || !profile) return (
     <div className="h-screen bg-black flex items-center justify-center font-mono text-emerald-500 animate-pulse text-[10px] tracking-[0.5em]">
@@ -97,7 +116,7 @@ export default function DashboardPage() {
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
       
-      {/* --- MASTER NAVIGATION --- */}
+      {/* NAVIGATION (LOCKED DASHBOARD BTN) */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
         <button 
           onClick={() => setView('admin')}
@@ -144,11 +163,10 @@ export default function DashboardPage() {
         </div>
       </nav>
 
-      {/* --- MAIN CONTENT --- */}
-      <main className="flex-1 overflow-y-auto bg-[#020202]">
+      <main className="flex-1 overflow-hidden bg-[#020202]">
         {view === 'admin' ? (
           /* --- DASHBOARD VIEW (LOCKED) --- */
-          <div className="max-w-6xl mx-auto p-12 space-y-12 animate-in fade-in duration-700">
+          <div className="h-full overflow-y-auto max-w-6xl mx-auto p-12 space-y-12 animate-in fade-in duration-700">
             <header className="flex justify-between items-end border-b border-white/5 pb-10">
               <div className="space-y-1">
                 <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em]">Node_Operator</p>
@@ -166,13 +184,11 @@ export default function DashboardPage() {
                 <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Spendable_Signal</p>
                 <p className="text-4xl font-black text-white tabular-nums tracking-tighter">{profile.signal_to_spend || 0}</p>
               </div>
-
               <div className="p-8 bg-zinc-900/30 border border-white/5">
                 <BarChart3 className="text-blue-500 mb-6" size={28} />
                 <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Power_Level</p>
                 <p className="text-4xl font-black text-white tabular-nums tracking-tighter">{profile.signal_score || 0}</p>
               </div>
-
               <div className="p-8 bg-zinc-900/30 border border-white/5">
                 <Activity className="text-purple-500 mb-6" size={28} />
                 <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Access_Progression</p>
@@ -182,87 +198,104 @@ export default function DashboardPage() {
                 <p className="text-[8px] text-zinc-600 mt-2 uppercase italic tracking-tighter">Mining required for niche access...</p>
               </div>
             </div>
-
-            <div className="border border-white/5 bg-black/40 rounded-sm overflow-hidden">
-              <div className="px-6 py-4 border-b border-white/5 bg-zinc-900/10">
-                <h3 className="text-[10px] font-black text-white uppercase tracking-widest flex items-center gap-2">
-                  <Hash size={12} className="text-emerald-500" /> Recent_Network_Events
-                </h3>
-              </div>
-              <div className="p-6 space-y-4 font-mono text-[10px]">
-                <div className="flex justify-between items-center opacity-60 font-mono">
-                  <span className="text-zinc-500">INIT // 00:00:00</span>
-                  <span className="text-emerald-500">SYSTEM READY</span>
-                  <span className="text-white uppercase">Identity_Linked</span>
-                </div>
-              </div>
-            </div>
           </div>
         ) : (
-          /* --- THE LOBBY (MINING ZONE) --- */
-          <div className="h-full flex flex-col relative animate-in slide-in-from-bottom duration-500">
+          /* --- THE LOBBY (CENTERED CHAT + HASHTAG SIDEBAR) --- */
+          <div className="h-full flex relative animate-in slide-in-from-bottom duration-500">
             
-            {/* LOBBY HEADER HUD */}
-            <div className="px-8 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md flex items-center justify-between z-10">
-              <div className="flex items-center gap-3">
-                <Radio className="text-blue-400 animate-pulse" size={14} />
-                <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Live_Mining_Feed</span>
-              </div>
-              <div className="text-[9px] font-black text-zinc-700 uppercase">
-                Nodes_Active: <span className="text-emerald-500">4,102</span>
-              </div>
-            </div>
-
-            {/* MESSAGE FEED */}
-            <div className="flex-1 overflow-y-auto p-8 space-y-8 scrollbar-hide bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
-              {messages.length === 0 && (
-                <div className="h-full flex items-center justify-center opacity-20">
-                  <p className="text-xs uppercase font-black tracking-widest">No signals detected in the Lobby...</p>
+            {/* CENTERED CHAT CONTAINER */}
+            <div className="flex-1 flex flex-col border-r border-white/5 relative">
+              
+              {/* FILTER STATUS HUD */}
+              <div className="px-8 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Radio className="text-blue-400 animate-pulse" size={14} />
+                  <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">
+                    {activeHashtag ? `Filtering: ${activeHashtag}` : 'Live_Mining_Feed'}
+                  </span>
                 </div>
-              )}
-              {messages.map((m) => (
-                <div key={m.id} className="max-w-4xl flex flex-col gap-1.5 animate-in fade-in slide-in-from-left-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
-                    <span className="text-[10px] font-black text-white/50 uppercase">{m.profiles?.username || 'ANON_UNIT'}</span>
-                    <span className="text-[8px] font-bold text-emerald-500/20 tabular-nums tracking-tighter">[{m.profiles?.signal_score}]</span>
-                  </div>
-                  <div className="bg-white/[0.02] border-l border-white/5 p-4 rounded-r-md">
-                    <p className="text-[15px] text-zinc-300 leading-relaxed font-medium selection:bg-emerald-500 selection:text-black">
-                      {m.content}
-                    </p>
-                  </div>
-                </div>
-              ))}
-              <div ref={scrollRef} />
-            </div>
-
-            {/* TRANSMISSION INPUT */}
-            <div className="p-8 border-t border-white/5 bg-black">
-              <form onSubmit={transmitSignal} className="max-w-4xl mx-auto group">
-                <div className="relative flex items-center bg-white/5 border border-white/10 rounded-sm focus-within:border-emerald-500/50 focus-within:bg-emerald-500/[0.02] transition-all overflow-hidden shadow-2xl">
-                  <div className="pl-4 text-zinc-700">
-                    <Zap size={14} className="group-focus-within:text-emerald-500 transition-colors" />
-                  </div>
-                  <input 
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    placeholder="TRANSMIT_SIGNAL_TO_MINE_POINTS..."
-                    className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase tracking-widest placeholder:text-zinc-800"
-                  />
-                  <button 
-                    type="submit" 
-                    className="h-full px-8 bg-zinc-900 border-l border-white/10 text-emerald-500 font-black text-xs uppercase hover:bg-emerald-500 hover:text-black transition-all active:scale-95"
-                  >
-                    Broadcast
+                {activeHashtag && (
+                  <button onClick={() => setActiveHashtag(null)} className="text-[8px] flex items-center gap-1 text-zinc-500 hover:text-white uppercase font-black">
+                    <X size={10} /> Clear Filter
                   </button>
+                )}
+              </div>
+
+              {/* MESSAGES (CENTERED CONTENT) */}
+              <div className="flex-1 overflow-y-auto scrollbar-hide">
+                <div className="max-w-2xl mx-auto p-8 space-y-8">
+                  {filteredMessages.map((m) => (
+                    <div key={m.id} className="flex flex-col gap-1.5 animate-in fade-in">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black text-white/50 uppercase">{m.profiles?.username || 'ANON_UNIT'}</span>
+                        <span className="text-[8px] font-bold text-emerald-500/20 tabular-nums">[{m.profiles?.signal_score}]</span>
+                      </div>
+                      <div className="bg-white/[0.02] border-l border-white/10 p-4 rounded-r-md">
+                        <p className="text-[15px] text-zinc-300 leading-relaxed font-medium">
+                          {m.content}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={scrollRef} />
                 </div>
-                <div className="flex justify-between mt-3 px-1">
-                  <p className="text-[8px] text-zinc-600 uppercase font-black">Secure_Encryption: AES-256</p>
-                  <p className="text-[8px] text-emerald-500/50 uppercase font-black">Earn +5 SP per unique signal</p>
-                </div>
-              </form>
+              </div>
+
+              {/* INPUT BAR */}
+              <div className="p-8 border-t border-white/5 bg-black">
+                <form onSubmit={transmitSignal} className="max-w-2xl mx-auto">
+                  <div className="relative flex items-center bg-white/5 border border-white/10 rounded-sm focus-within:border-emerald-500/50 transition-all overflow-hidden">
+                    <div className="pl-4 text-zinc-700">
+                      <Zap size={14} />
+                    </div>
+                    <input 
+                      value={newMessage}
+                      onChange={(e) => setNewMessage(e.target.value)}
+                      placeholder={activeHashtag ? `Broadcasting in ${activeHashtag}...` : "TRANSMIT_SIGNAL..."}
+                      className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase tracking-widest placeholder:text-zinc-800"
+                    />
+                    <button type="submit" className="px-8 bg-zinc-900 border-l border-white/10 text-emerald-500 font-black text-xs uppercase hover:bg-emerald-500 transition-all">
+                      Broadcast
+                    </button>
+                  </div>
+                  {activeHashtag && (
+                    <p className="mt-2 text-[8px] text-emerald-500 uppercase font-black animate-pulse">
+                      Auto-Tag Active: {activeHashtag}
+                    </p>
+                  )}
+                </form>
+              </div>
             </div>
+
+            {/* RIGHT SIDEBAR: TRENDING */}
+            <aside className="w-80 bg-black p-6 flex flex-col gap-8">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-emerald-500">
+                  <TrendingUp size={16} />
+                  <h3 className="text-[11px] font-black uppercase tracking-widest">Trending_Signals</h3>
+                </div>
+                <div className="space-y-2">
+                  {trendingTags.length === 0 && <p className="text-[9px] text-zinc-800 uppercase">Scanning for tags...</p>}
+                  {trendingTags.map(([tag, count]) => (
+                    <button 
+                      key={tag}
+                      onClick={() => setActiveHashtag(tag)}
+                      className={`w-full flex justify-between items-center p-3 rounded-sm border transition-all
+                        ${activeHashtag === tag ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-500' : 'bg-white/5 border-white/5 text-zinc-500 hover:border-white/20 hover:text-white'}`}
+                    >
+                      <span className="text-[10px] font-bold tracking-widest">{tag}</span>
+                      <span className="text-[8px] font-black tabular-nums opacity-50">{count}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-auto p-4 border border-emerald-500/10 rounded bg-emerald-500/[0.02]">
+                <p className="text-[9px] font-black text-emerald-500 uppercase mb-2">Mining Tip</p>
+                <p className="text-[10px] text-zinc-500 leading-tight">Using trending hashtags increases signal reach and earns bonus SP.</p>
+              </div>
+            </aside>
+
           </div>
         )}
       </main>
