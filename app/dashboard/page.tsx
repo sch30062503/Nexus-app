@@ -19,7 +19,9 @@ export default function DashboardPage() {
   const [view, setView] = useState<'admin' | 'chat'>('admin');
   const [loading, setLoading] = useState(true);
   const [activeHashtag, setActiveHashtag] = useState<string | null>(null);
+  
   const scrollRef = useRef<HTMLDivElement>(null);
+  const channelRef = useRef<any>(null); // Track the active subscription
 
   // --- DERIVED DATA ---
   const theLobby = useMemo(() => districts.find(d => d.slug === 'lobby'), [districts]);
@@ -27,11 +29,9 @@ export default function DashboardPage() {
   const subTiers = useMemo(() => districts.filter(d => d.parent_slug === 'finance'), [districts]);
   
   const isFinanceSector = activeDistrict?.slug === 'finance' || activeDistrict?.slug.startsWith('finance-');
-  
   const hasHashtag = useMemo(() => /#\w+/.test(newMessage), [newMessage]);
   const currentReward = hasHashtag || activeHashtag ? 5 : 3;
 
-  // Localized Trending
   const localizedTrending = useMemo(() => {
     const counts: Record<string, number> = {};
     messages.forEach(m => {
@@ -41,7 +41,6 @@ export default function DashboardPage() {
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
   }, [messages]);
 
-  // Filtered Message Stream
   const filteredMessages = useMemo(() => {
     if (!activeHashtag) return messages;
     return messages.filter(m => m.content.includes(activeHashtag));
@@ -63,11 +62,18 @@ export default function DashboardPage() {
   };
 
   const enterRoom = async (district: any) => {
-    // CRITICAL FIX: Reset filter immediately on room entry to prevent "tag bleed"
+    // 1. Kill previous subscription immediately
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+    }
+
+    // 2. Clear room-specific state
+    setMessages([]); // Wipe message array so old room text disappears instantly
     setActiveHashtag(null);
     setView('chat');
     setActiveDistrict(district);
     
+    // 3. Fetch historical messages for the NEW room only
     const { data } = await supabase.from("messages")
       .select("*, profiles(username, signal_score)")
       .eq("district_slug", district.slug)
@@ -76,6 +82,7 @@ export default function DashboardPage() {
     
     if (data) setMessages(data);
 
+    // 4. Create NEW subscription and store in Ref
     const channel = supabase.channel(`room:${district.slug}`)
       .on('postgres_changes', { 
         event: 'INSERT', 
@@ -91,7 +98,7 @@ export default function DashboardPage() {
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    channelRef.current = channel;
   };
 
   const transmitSignal = async (e: React.FormEvent) => {
@@ -120,21 +127,14 @@ export default function DashboardPage() {
   useEffect(() => { loadNexus(); }, []);
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [filteredMessages]);
 
-  if (loading || !profile) return (
-    <div className="h-screen bg-black flex items-center justify-center font-mono text-emerald-500 animate-pulse text-[10px]">
-      SYNCING_RESOURCES...
-    </div>
-  );
+  if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center font-mono text-emerald-500 animate-pulse text-[10px]">SYNCING_RESOURCES...</div>;
 
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
       
       {/* NAV BAR */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
-        <button 
-          onClick={() => { setView('admin'); setActiveHashtag(null); }} 
-          className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 border border-emerald-500/20 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'hover:text-white'}`}
-        >
+        <button onClick={() => { setView('admin'); setActiveHashtag(null); }} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 border border-emerald-500/20 bg-emerald-500/5' : 'hover:text-white'}`}>
           <LayoutGrid size={16} />
           <span className="text-xs font-black uppercase tracking-widest">Dashboard</span>
         </button>
@@ -143,10 +143,7 @@ export default function DashboardPage() {
 
         <div className="flex items-center gap-6">
           {theLobby && (
-            <button 
-              onClick={() => enterRoom(theLobby)} 
-              className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${activeDistrict?.slug === 'lobby' && view === 'chat' ? 'text-blue-400 border border-blue-400/20 bg-blue-400/5 shadow-[0_0_10px_rgba(96,165,250,0.1)]' : 'hover:text-white'}`}
-            >
+            <button onClick={() => enterRoom(theLobby)} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${activeDistrict?.slug === 'lobby' && view === 'chat' ? 'text-blue-400 border border-blue-400/20 bg-blue-400/5 shadow-[0_0_10px_rgba(96,165,250,0.1)]' : 'hover:text-white'}`}>
               <Globe size={16} />
               <span className="text-xs font-black uppercase tracking-widest">The_Lobby</span>
             </button>
@@ -155,19 +152,14 @@ export default function DashboardPage() {
           {mainHubs.map(n => {
             const isLocked = profile.signal_score < n.min_score;
             return (
-              <button 
-                key={n.slug} 
-                disabled={isLocked} 
-                onClick={() => enterRoom(n)} 
-                className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all ${isLocked ? 'text-zinc-800' : 'text-zinc-600 hover:text-white'} ${activeDistrict?.slug === n.slug && view === 'chat' ? 'text-emerald-400' : ''}`}
-              >
+              <button key={n.slug} disabled={isLocked} onClick={() => enterRoom(n)} className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all ${isLocked ? 'text-zinc-800' : 'text-zinc-600 hover:text-white'} ${activeDistrict?.slug === n.slug && view === 'chat' ? 'text-emerald-400' : ''}`}>
                 {isLocked && <Lock size={10} />} {n.name}
               </button>
             );
           })}
         </div>
 
-        <div className="ml-auto text-right">
+        <div className="ml-auto text-right px-4">
           <p className="text-[8px] font-black text-zinc-600 uppercase">Global_Signal</p>
           <p className="text-emerald-500 text-sm font-black tabular-nums">{profile.signal_score?.toLocaleString()}</p>
         </div>
@@ -214,12 +206,7 @@ export default function DashboardPage() {
                     const isLocked = (profile.finance_xp || 0) < tier.min_score;
                     const progress = Math.min(100, ((profile.finance_xp || 0) / tier.min_score) * 100);
                     return (
-                      <button 
-                        key={tier.slug} 
-                        disabled={isLocked} 
-                        onClick={() => enterRoom(tier)} 
-                        className={`text-left p-3 rounded border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400' : isLocked ? 'border-zinc-900 text-zinc-800' : 'border-white/5 text-zinc-600 hover:text-white'}`}
-                      >
+                      <button key={tier.slug} disabled={isLocked} onClick={() => enterRoom(tier)} className={`text-left p-3 rounded border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400' : isLocked ? 'border-zinc-900 text-zinc-800' : 'border-white/5 text-zinc-600 hover:text-white'}`}>
                         <div className="flex justify-between items-center mb-1"><span className="text-[9px] font-bold uppercase truncate">{tier.name}</span>{isLocked && <Lock size={8} />}</div>
                         <div className="h-1 w-full bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 transition-all duration-1000" style={{ width: `${progress}%` }} /></div>
                       </button>
@@ -231,7 +218,7 @@ export default function DashboardPage() {
 
             <div className="flex-1 flex flex-col relative bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:40px_40px]">
               
-              <div className="px-8 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md flex items-center justify-between z-10">
+              <div className="px-8 py-3 border-b border-white/5 bg-black/80 flex items-center justify-between z-10">
                 <div className="flex items-center gap-3">
                   {isFinanceSector ? <DollarSign className="text-emerald-500" size={14} /> : <Radio className="text-blue-400" size={14} />}
                   <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">{activeDistrict?.name}</span>
@@ -263,8 +250,8 @@ export default function DashboardPage() {
               <div className="p-8 border-t border-white/5 bg-black">
                 <form onSubmit={transmitSignal} className="max-w-2xl mx-auto">
                   <div className={`flex items-center bg-white/5 border rounded-sm transition-all ${isFinanceSector ? 'border-emerald-500/20 focus-within:border-emerald-500' : 'border-white/10 focus-within:border-emerald-500/50'}`}>
-                    <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase tracking-widest placeholder:text-zinc-800" placeholder="TRANSMIT_SIGNAL..." />
-                    <button type="submit" className="px-8 h-full bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black transition-all">Broadcast</button>
+                    <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase" placeholder="TRANSMIT_SIGNAL..." />
+                    <button type="submit" className="px-8 h-full bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black">Broadcast</button>
                   </div>
                   <div className="flex justify-between mt-2 px-1">
                     <p className={`text-[8px] uppercase font-black transition-all duration-300 ${hasHashtag ? 'text-emerald-400 animate-pulse' : 'text-zinc-700'}`}>
