@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, Timer, Activity, Flame, Lock, Trash2 } from "lucide-react";
+import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, Timer, Activity, Flame, Lock, Trash2, ShieldCheck } from "lucide-react";
 import Leaderboard from "@/components/Leaderboard";
 
 // --- TYPES ---
@@ -69,12 +69,14 @@ export default function DashboardPage() {
     const { data: dData } = await supabase.from("districts").select("*").order('min_score', { ascending: true });
     if (dData) {
       setDistricts(dData);
+      // Auto-set first district if none active
       if (!activeDistrict) {
         setActiveDistrict(dData[0]);
         fetchMsgs(dData[0].slug);
       }
     }
 
+    // Load initial activity counts
     const { data: countData } = await supabase.from("messages").select("district_slug");
     if (countData) {
       const counts: Record<string, number> = {};
@@ -89,7 +91,14 @@ export default function DashboardPage() {
   };
 
   const fetchMsgs = async (slug: string) => {
-    const { data } = await supabase.from("messages").select("*, profiles(username, signal_score)").eq("district_slug", slug).order("created_at", { ascending: true }).limit(100);
+    // Hub-Filtered Message Fetching
+    const { data } = await supabase
+      .from("messages")
+      .select("*, profiles(username, signal_score)")
+      .eq("district_slug", slug) // The Hub Filter
+      .order("created_at", { ascending: true })
+      .limit(100);
+
     if (data) {
       setMessages(data as any);
       const tags: Record<string, number> = {};
@@ -101,23 +110,13 @@ export default function DashboardPage() {
     }
   };
 
-  // --- DELETE FUNCTION ---
   const deleteMessage = async (messageId: string, authorId: string) => {
-    // Permission check: Is user the author OR a founder?
     const canDelete = profile?.id === authorId || profile?.is_founder;
-    
     if (!canDelete) return triggerToast("ACCESS_DENIED");
-
-    const { error } = await supabase
-      .from("messages")
-      .delete()
-      .eq("id", messageId);
-
+    const { error } = await supabase.from("messages").delete().eq("id", messageId);
     if (!error) {
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
       triggerToast("SIGNAL_DELETED");
-    } else {
-      triggerToast("DELETE_FAILED");
     }
   };
 
@@ -169,16 +168,31 @@ export default function DashboardPage() {
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !profile || isCooldown || !activeDistrict) return;
-    let content = newMessage;
-    if (activeFrequency && !content.toUpperCase().includes(`#${activeFrequency}`)) content = `${newMessage} #${activeFrequency}`;
+    
     setIsCooldown(true);
-    const { error } = await supabase.from("messages").insert({ content, profile_id: profile.id, district_slug: activeDistrict.slug, is_founder_msg: profile.is_founder });
-    if (!error && !profile.is_founder) {
-      const pts = feverMode ? 10 : 5;
-      setProfile(p => p ? {...p, signal_score: (p.signal_score || 0) + pts} : null);
-      await supabase.rpc('increment_signal_with_dividend', { user_id: profile.id, amount: pts });
+    
+    // Hub-Integrated Point Calculation
+    let targetHub = activeDistrict.slug;
+    let content = newMessage;
+    if (activeFrequency && !content.toUpperCase().includes(`#${activeFrequency}`)) {
+        content = `${newMessage} #${activeFrequency}`;
     }
-    setNewMessage("");
+
+    // Call our Hub-Integrated RPC function
+    const { data, error } = await supabase.rpc('submit_signal', {
+      user_id: profile.id,
+      signal_content: content,
+      target_hub: targetHub
+    });
+
+    if (!error) {
+        // Sync local score with multiplier applied from backend
+        setProfile(p => p ? {...p, signal_score: (p.signal_score || 0) + data.awarded} : null);
+        setNewMessage("");
+    } else {
+        triggerToast("TRANSMISSION_FAILED");
+    }
+    
     setTimeout(() => setIsCooldown(false), 800);
   };
 
@@ -224,8 +238,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!activeDistrict || !profile) return;
+    
+    // Hub-Filtered Real-time Stream
     const channel = supabase.channel(`nexus-${activeDistrict.slug}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `district_slug=eq.${activeDistrict.slug}` }, 
+      .on("postgres_changes", { 
+          event: "INSERT", 
+          schema: "public", 
+          table: "messages", 
+          filter: `district_slug=eq.${activeDistrict.slug}` 
+      }, 
         async (payload) => {
           const { data: uData } = await supabase.from("profiles").select("username, signal_score").eq("id", payload.new.profile_id).single();
           setMessages((prev) => [...prev, { ...payload.new, profiles: uData } as Message]);
@@ -285,7 +306,7 @@ export default function DashboardPage() {
     <div className={`h-[100dvh] flex flex-col font-mono bg-black text-zinc-400 overflow-hidden ${feverMode ? 'ring-inset ring-4 ring-orange-500/20' : ''}`}>
       
       {floatingPoints.map(p => (
-        <span key={p.id} style={{ left: p.x, top: p.y }} className="fixed pointer-events-none text-emerald-400 font-black text-[10px] animate-bounce z-[300] -translate-y-8">+1_SIGNAL</span>
+        <span key={p.id} style={{ left: p.x, top: p.y }} className="fixed pointer-events-none text-emerald-400 font-black text-[10px] animate-bounce z-[300] -translate-y-8">+SIGNAL</span>
       ))}
 
       <div className={`${feverMode ? 'bg-orange-500 animate-pulse' : 'bg-emerald-500'} text-black py-1 px-4 flex justify-between items-center z-[100]`}>
@@ -312,6 +333,7 @@ export default function DashboardPage() {
             </button>
         </div>
 
+        {/* --- HUB / DISTRICT NAVIGATOR --- */}
         <div className="flex items-center gap-2 px-4 pb-3 overflow-x-auto no-scrollbar scroll-smooth">
             {districts.map((d) => {
                 const isLocked = (profile.signal_score || 0) < d.min_score;
@@ -335,7 +357,7 @@ export default function DashboardPage() {
                             <span className={`text-[7px] mt-0.5 ${isActive ? 'text-black/60' : 'text-zinc-600'}`}>
                               {isLocked ? `REQ: ${d.min_score}` : (
                                 <span className="flex gap-2">
-                                  <b className={`${isHeat ? 'text-orange-500 animate-pulse' : isActive ? 'text-black' : 'text-emerald-400'}`}>{liveUnits} LIVE {isHeat && "🔥"}</b> 
+                                  <b className={`${isHeat ? 'text-orange-500 animate-pulse' : isActive ? 'text-black' : 'text-emerald-400'}`}>{liveUnits} LIVE</b> 
                                   <span>| {count} SIGS</span>
                                 </span>
                               )}
@@ -379,6 +401,23 @@ export default function DashboardPage() {
               <button onClick={() => setShowMegaModal(true)} className="w-full py-2 bg-emerald-500/10 border border-emerald-500/40 text-emerald-500 text-[9px] font-black uppercase rounded">Takeover</button>
             </div>
 
+            {/* SECTOR ANALYTICS (ELITE DATA) */}
+            {profile.signal_score! >= 10000 && (
+                <div className="p-4 border border-purple-500/30 bg-purple-500/5 rounded-xl space-y-2">
+                    <p className="text-[10px] text-purple-400 font-black uppercase flex items-center gap-2"><Activity size={12} /> Elite_Analytics</p>
+                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                        <div className="bg-black/40 p-2 rounded">
+                            <span className="text-zinc-600">HUB_LOAD:</span>
+                            <span className="text-purple-400 ml-1">{districtActivity[activeDistrict?.slug || ''] || 0}</span>
+                        </div>
+                        <div className="bg-black/40 p-2 rounded">
+                            <span className="text-zinc-600">VAL_EST:</span>
+                            <span className="text-emerald-400 ml-1">{(1000 / (profile.signal_score || 1)).toFixed(4)}</span>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div className="space-y-4">
               <p className="text-[10px] text-zinc-600 font-black uppercase flex items-center gap-2"><Hash size={10} /> Trends_In_{activeDistrict?.name}</p>
               <div className="flex flex-wrap gap-2">
@@ -411,16 +450,21 @@ export default function DashboardPage() {
                 {filteredMessages.map((msg) => {
                   const hasHotTag = msg.content.match(/#\w+/g)?.some(tag => frequencyMap[tag.toUpperCase()] > 5);
                   const canDelete = profile?.id === msg.profile_id || profile?.is_founder;
+                  const score = msg.profiles?.signal_score || 0;
 
                   return (
                     <div key={msg.id} className="flex flex-col gap-1 max-w-[95%] group relative">
                       <div className="flex items-center justify-between w-full">
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-black text-zinc-500 uppercase">{msg.profiles?.username || 'ANON'}</span>
+                          <span className={`text-[10px] font-black uppercase ${score >= 10000 ? 'text-purple-500' : score >= 2500 ? 'text-emerald-500' : 'text-zinc-500'}`}>
+                              {msg.profiles?.username || 'ANON'}
+                          </span>
+                          <span className="text-[8px] text-zinc-800 uppercase bg-white/5 px-1 rounded">
+                              {score >= 10000 ? "NEXUS_ELITE" : score >= 2500 ? "CORE_UNIT" : score >= 500 ? "GRID_RUNNER" : "SCRAPPER"}
+                          </span>
                           <span className="text-[8px] text-zinc-800 uppercase">{new Date(msg.created_at).toLocaleTimeString()}</span>
                         </div>
                         
-                        {/* DELETE BUTTON - Only visible to Owner or Founder */}
                         {canDelete && (
                           <button 
                             onClick={(e) => { e.stopPropagation(); deleteMessage(msg.id, msg.profile_id); }}
@@ -446,7 +490,18 @@ export default function DashboardPage() {
           </div>
 
           {!showLeaderboard && (
-            <div className="p-4 lg:p-8 bg-black">
+            <div className="p-4 lg:p-8 bg-black relative">
+               {/* LOCKED OVERLAY FOR FEED */}
+               {activeDistrict && (profile.signal_score || 0) < activeDistrict.min_score && (
+                   <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 text-center">
+                       <div className="space-y-4">
+                            <ShieldCheck className="mx-auto text-red-500 animate-pulse" size={48} />
+                            <h3 className="text-red-500 font-black tracking-widest">CLEARANCE_REQUIRED</h3>
+                            <p className="text-xs text-zinc-500 uppercase">You need {activeDistrict.min_score - (profile.signal_score || 0)} more Signal to access {activeDistrict.name}</p>
+                       </div>
+                   </div>
+               )}
+
               <form onSubmit={sendMessage} className={`flex items-center gap-2 bg-white/5 border rounded-2xl px-4 py-1 transition-all ${activeFrequency ? 'border-blue-500' : 'border-white/10'}`}>
                   <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="INPUT_SIGNAL..." className="flex-1 bg-transparent py-4 text-sm text-white outline-none uppercase font-bold" />
                   <button type="submit" className={`p-2 rounded-lg text-black ${activeFrequency ? 'bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]'}`}><ChevronUp size={20}/></button>
@@ -456,6 +511,7 @@ export default function DashboardPage() {
         </main>
       </div>
 
+      {/* TAKE OVER MODAL */}
       {showMegaModal && (
         <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4">
           <div className="w-full max-w-md border border-emerald-500/30 bg-zinc-950 p-6 rounded-2xl space-y-6">
