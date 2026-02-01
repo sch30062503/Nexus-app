@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, Timer, Activity, Flame } from "lucide-react";
+import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, Timer, Activity, Flame, Lock } from "lucide-react";
 import Leaderboard from "@/components/Leaderboard";
 
 type District = { slug: string; name: string; min_score: number; description: string; last_activity?: string };
@@ -35,7 +35,6 @@ export default function DashboardPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [trendingTags, setTrendingTags] = useState<string[]>([]);
   
-  // NEW STATES
   const [activeFrequency, setActiveFrequency] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState(""); 
   
@@ -58,7 +57,6 @@ export default function DashboardPage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // --- LOGIC: FREQUENCY MAP ---
   const frequencyMap = useMemo(() => {
     const counts: Record<string, number> = {};
     messages.forEach(m => {
@@ -71,7 +69,6 @@ export default function DashboardPage() {
     return counts;
   }, [messages]);
 
-  // --- LOGIC: FILTERING ---
   const filteredMessages = useMemo(() => {
     return messages.filter(m => {
       const content = m.content.toUpperCase();
@@ -81,7 +78,6 @@ export default function DashboardPage() {
     });
   }, [messages, filterQuery, activeFrequency]);
 
-  // --- LOGIC: DOUBLE TAP ---
   const handleDoubleTap = async (targetUserId: string) => {
     const now = Date.now();
     if (now - lastTap.current < 300) {
@@ -92,7 +88,6 @@ export default function DashboardPage() {
     lastTap.current = now;
   };
 
-  // --- FEVER MODE ---
   useEffect(() => {
     const fetchFeverState = async () => {
       const { data } = await supabase.from('system_settings').select('value').eq('key', 'fever_mode').single();
@@ -113,7 +108,6 @@ export default function DashboardPage() {
     await supabase.from('system_settings').update({ value: { active: !feverMode } }).eq('key', 'fever_mode');
   };
 
-  // --- IDENTITY ---
   const updateIdentity = async () => {
     const CHANGE_COST = 1000;
     if (!newUsername || newUsername.length < 3) return triggerToast("ID_TOO_SHORT");
@@ -130,7 +124,6 @@ export default function DashboardPage() {
     }
   };
 
-  // --- MEGAPHONE ---
   const handleTakeover = async () => {
     if (!profile || megaBid <= (megaphone.decayedPrice || 0)) return triggerToast("BID_MUST_EXCEED_DECAY");
     const { error } = await supabase.rpc('takeover_megaphone', {
@@ -141,14 +134,19 @@ export default function DashboardPage() {
     if (!error) { triggerToast("SIGNAL_BROADCASTED"); setShowMegaModal(false); loadNexus(); }
   };
 
-  // --- CORE LOADING ---
   const loadNexus = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return router.replace("/");
     const { data: pData } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
     if (pData) setProfile(pData as Profile);
     const { data: dData } = await supabase.from("districts").select("*").order('min_score', { ascending: true });
-    if (dData) { setDistricts(dData); const target = activeDistrict || dData[0]; setActiveDistrict(target); fetchMsgs(target.slug); }
+    if (dData) { 
+        setDistricts(dData); 
+        if (!activeDistrict) {
+            setActiveDistrict(dData[0]);
+            fetchMsgs(dData[0].slug);
+        }
+    }
     const { data: megaData } = await supabase.rpc('get_decayed_bid');
     if (megaData?.[0]) setMegaphone({ msg: megaData[0].current_message, bid: megaData[0].bid_amount, owner: megaData[0].owner_username, decayedPrice: megaData[0].decayed_price });
     setLoading(false);
@@ -238,19 +236,64 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* HEADER */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-black/80 z-[70]">
-        <div className="flex items-center gap-4">
-          <button onClick={() => setIsSidebarOpen(true)} className="p-1 text-emerald-500 lg:hidden"><Menu size={24} /></button>
-          <div className="flex flex-col">
-            <span className="text-[9px] text-zinc-600 font-black uppercase tracking-tighter">Nexus_Terminal</span>
-            <span className="text-xs text-white font-black uppercase tracking-widest">{activeDistrict?.name}</span>
-          </div>
+      {/* NEW HEADER AREA WITH ZONE NAV */}
+      <div className="flex flex-col border-b border-white/5 bg-black/80 z-[70]">
+        <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex items-center gap-4">
+            <button onClick={() => setIsSidebarOpen(true)} className="p-1 text-emerald-500 lg:hidden"><Menu size={24} /></button>
+            <div className="flex flex-col">
+                <span className="text-[9px] text-zinc-600 font-black uppercase tracking-tighter">Terminal_v3.0</span>
+                <span className="text-xs text-white font-black uppercase tracking-widest">SIGNAL_SCORE: {profile.signal_score?.toLocaleString()}</span>
+            </div>
+            </div>
+            <button onClick={() => setShowLeaderboard(!showLeaderboard)} className={`px-3 py-1 rounded text-[9px] font-black uppercase border transition-all flex items-center gap-2 ${showLeaderboard ? 'bg-emerald-500 text-black border-emerald-500' : 'text-emerald-500 border-emerald-500/30'}`}>
+            <Trophy size={10} /> {showLeaderboard ? "Close_Rank" : "Rankings"}
+            </button>
         </div>
-        <button onClick={() => setShowLeaderboard(!showLeaderboard)} className={`px-3 py-1 rounded text-[9px] font-black uppercase border transition-all flex items-center gap-2 ${showLeaderboard ? 'bg-emerald-500 text-black border-emerald-500' : 'text-emerald-500 border-emerald-500/30'}`}>
-          <Trophy size={10} /> {showLeaderboard ? "Close_Rank" : "Rankings"}
-        </button>
-      </div>
+
+        {/* 🗺️ HORIZONTAL ZONE BAR WITH SIGNAL MAP */}
+<div className="flex items-center gap-2 px-4 pb-3 overflow-x-auto no-scrollbar scroll-smooth">
+    {districts.map((d) => {
+        const isLocked = (profile.signal_score || 0) < d.min_score;
+        const isActive = activeDistrict?.slug === d.slug;
+        
+        // Calculate "Heat" - this could later be tied to real message counts from Supabase
+        const isHot = messages.filter(m => m.district_slug === d.slug).length > 20;
+
+        return (
+            <button 
+                key={d.slug} 
+                disabled={isLocked}
+                onClick={() => { setActiveDistrict(d); fetchMsgs(d.slug); }} 
+                className={`flex-shrink-0 flex items-center gap-3 px-4 py-2 rounded-full border text-[10px] font-black uppercase transition-all
+                ${isActive ? 'bg-emerald-500 border-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 
+                  isLocked ? 'border-white/5 text-zinc-800 cursor-not-allowed' : 'border-white/10 text-zinc-400 hover:border-emerald-500/50 hover:bg-white/[0.02]'}`}
+            >
+                <div className="relative">
+                    {isLocked ? <Lock size={10}/> : <Radio size={10} className={isActive ? "animate-pulse" : ""}/>}
+                    {!isLocked && isHot && (
+                        <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full animate-ping" />
+                    )}
+                </div>
+                
+                <div className="flex flex-col items-start leading-none">
+                    <span>{d.name}</span>
+                    {!isLocked && (
+                        <span className={`text-[7px] mt-0.5 ${isActive ? 'text-black/60' : 'text-zinc-600'}`}>
+                            {isHot ? "HIGH_SIGNAL" : "STABLE"}
+                        </span>
+                    )}
+                </div>
+
+                {isLocked && (
+                    <span className="text-[8px] bg-zinc-900 px-1.5 py-0.5 rounded text-zinc-600">
+                        {d.min_score}
+                    </span>
+                )}
+            </button>
+        );
+    })}
+</div>
 
       <div className="flex-1 flex overflow-hidden">
         {/* SIDEBAR */}
@@ -262,7 +305,6 @@ export default function DashboardPage() {
 
           <div className="p-6 flex-1 overflow-y-auto space-y-8 scrollbar-hide">
             
-            {/* FOUNDER OVERRIDE */}
             {profile?.is_founder && (
               <div className="p-4 border border-orange-500/50 bg-orange-500/5 rounded-xl space-y-3">
                 <p className="text-[10px] text-orange-500 font-black uppercase flex items-center gap-2"><ShieldAlert size={12}/> System_Override</p>
@@ -272,106 +314,46 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* IDENTITY TUNER */}
             <div className="p-4 border border-white/10 bg-white/5 rounded-xl space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] text-zinc-600 font-black uppercase flex items-center gap-2"><Settings size={10} /> Identity_Tuner</p>
-                <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">1000_SIGNAL</span>
-              </div>
+              <p className="text-[10px] text-zinc-600 font-black uppercase flex items-center gap-2"><Settings size={10} /> Identity_Tuner</p>
               <div className="flex gap-2">
                 <input value={newUsername} onChange={(e) => setNewUsername(e.target.value.toUpperCase())} placeholder={profile.username || "SET_ID..."} className="flex-1 bg-black border border-white/10 p-2 text-[10px] text-white outline-none rounded" />
                 <button onClick={updateIdentity} className="bg-emerald-500 text-black px-3 py-1 text-[9px] font-black rounded uppercase">Sync</button>
               </div>
             </div>
 
-            {/* MEGAPHONE DISPLAY */}
             <div className="p-4 border border-emerald-500/30 bg-emerald-500/5 rounded-xl">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <Radio size={10} className="text-emerald-500 animate-pulse" />
-                  <h3 className="text-[10px] text-emerald-500 uppercase tracking-widest">Global_Signal</h3>
-                </div>
-                <div className="flex items-center gap-1">
-                   <Clock size={8} className="text-zinc-600"/>
-                   <span className="text-[8px] text-zinc-600 uppercase font-black">Decay</span>
-                </div>
-              </div>
+              <h3 className="text-[10px] text-emerald-500 uppercase tracking-widest mb-2">Global_Signal</h3>
               <p className="text-[11px] text-white font-bold italic mb-2">"{megaphone.msg}"</p>
-              <div className="flex justify-between items-end border-t border-white/5 pt-2 mb-3">
-                <div className="flex flex-col">
-                  <span className="text-[7px] text-zinc-600 uppercase">Min_Bid</span>
-                  <span className="text-xs font-black text-emerald-400">{megaphone.decayedPrice || 10}</span>
-                </div>
-                <span className="text-[8px] text-zinc-700 font-black uppercase">BY: {megaphone.owner}</span>
-              </div>
-              <button onClick={() => setShowMegaModal(true)} className="w-full py-2 bg-emerald-500/10 border border-emerald-500/40 text-emerald-500 text-[9px] font-black uppercase rounded hover:bg-emerald-500 hover:text-black">Takeover</button>
+              <button onClick={() => setShowMegaModal(true)} className="w-full py-2 bg-emerald-500/10 border border-emerald-500/40 text-emerald-500 text-[9px] font-black uppercase rounded">Takeover</button>
             </div>
 
-            {/* DIVIDEND TRACKER (RESTORED) */}
             <div className="p-4 border border-cyan-500/30 bg-cyan-500/5 rounded-xl">
-                <div className="flex items-center gap-2 mb-1">
-                    <Users size={10} className="text-cyan-500" />
-                    <h3 className="text-[10px] text-cyan-500/60 uppercase tracking-widest">Network_Dividends</h3>
-                </div>
+                <h3 className="text-[10px] text-cyan-500/60 uppercase tracking-widest mb-1">Network_Dividends</h3>
                 <p className="text-xl font-black text-white">+{profile.dividend_earned?.toLocaleString() || 0}</p>
             </div>
 
-            {/* TRENDING HASHTAGS (RESTORED) */}
             <div className="space-y-4">
               <p className="text-[10px] text-zinc-600 font-black uppercase flex items-center gap-2"><Hash size={10} /> Trending_Signal</p>
               <div className="flex flex-wrap gap-2">
-                {trendingTags.length > 0 ? trendingTags.map(tag => (
+                {trendingTags.map(tag => (
                   <button key={tag} onClick={() => {setFilterQuery(tag); setIsSidebarOpen(false);}} className={`text-[9px] border px-2 py-1 rounded font-bold transition-colors ${filterQuery === tag ? 'bg-emerald-500 border-emerald-500 text-black' : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-500'}`}>
                     {tag}
                   </button>
-                )) : <span className="text-[8px] text-zinc-800 uppercase">Awaiting_Trends...</span>}
-              </div>
-            </div>
-
-            {/* FREQUENCY TUNER (NEW) */}
-            <div className="p-4 border border-blue-500/30 bg-blue-500/5 rounded-xl space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] text-blue-400 font-black uppercase flex items-center gap-2"><Target size={12} /> Frequency_Tuner</p>
-                {activeFrequency && <button onClick={() => setActiveFrequency(null)} className="text-[8px] text-zinc-500 underline uppercase">Reset</button>}
-              </div>
-              <div className="relative">
-                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-blue-500 text-[10px] font-bold">#</span>
-                <input value={activeFrequency || ""} onChange={(e) => setActiveFrequency(e.target.value.replace('#', '').toUpperCase())} placeholder="TUNE_IN..." className="w-full bg-black border border-blue-500/20 p-2 pl-5 text-[10px] text-blue-400 outline-none rounded font-bold" />
-              </div>
-            </div>
-
-            {/* SIGNAL HEATMAP (NEW) */}
-            <div className="space-y-4">
-              <p className="text-[10px] text-zinc-600 font-black uppercase flex items-center gap-2"><Activity size={10} /> Signal_Heatmap</p>
-              <div className="grid grid-cols-1 gap-1">
-                {Object.entries(frequencyMap).sort((a,b) => b[1] - a[1]).slice(0, 3).map(([tag, count]) => (
-                  <button key={tag} onClick={() => { setActiveFrequency(tag.replace('#','')); setIsSidebarOpen(false); }} className="flex items-center justify-between p-2 rounded bg-white/[0.02] border border-white/5 hover:border-blue-500/30 group transition-all">
-                    <span className="text-[9px] font-bold text-zinc-400 group-hover:text-blue-400">{tag}</span>
-                    <div className="flex items-center gap-2">
-                      {count > 5 && <Flame size={10} className="text-orange-500 animate-pulse" />}
-                      <span className="text-[8px] font-black px-1.5 py-0.5 bg-zinc-900 rounded text-emerald-500">{count}</span>
-                    </div>
-                  </button>
                 ))}
               </div>
             </div>
 
-            {/* RECRUITMENT LINK (RESTORED) */}
+            <div className="p-4 border border-blue-500/30 bg-blue-500/5 rounded-xl space-y-3">
+              <p className="text-[10px] text-blue-400 font-black uppercase flex items-center gap-2"><Target size={12} /> Frequency_Tuner</p>
+              <input value={activeFrequency || ""} onChange={(e) => setActiveFrequency(e.target.value.replace('#', '').toUpperCase())} placeholder="TUNE_IN..." className="w-full bg-black border border-blue-500/20 p-2 text-[10px] text-blue-400 outline-none rounded font-bold" />
+            </div>
+
             <div className="p-4 border border-white/5 bg-white/5 rounded-xl space-y-3">
               <p className="text-[10px] text-zinc-600 font-black uppercase flex items-center gap-2"><Share2 size={10}/> Recruitment</p>
-              <button onClick={copyReferral} className={`w-full p-3 text-[10px] font-black uppercase border transition-all rounded-lg flex items-center justify-center gap-2 ${copied ? 'bg-emerald-500 text-black' : 'bg-zinc-900 text-white'}`}>
-                {copied ? "LINK_COPIED" : `ID: ${profile.referral_code?.toUpperCase() || '...'}`}
+              <button onClick={copyReferral} className="w-full p-3 text-[10px] font-black uppercase border border-white/10 rounded-lg bg-zinc-900 text-white">
+                {copied ? "LINK_COPIED" : `ID: ${profile.referral_code?.toUpperCase()}`}
               </button>
-            </div>
-
-            {/* ACTIVE ZONES (RESTORED) */}
-            <div className="space-y-2">
-                <p className="text-[10px] font-black text-zinc-600 uppercase">Active_Zones</p>
-                {districts.map((d) => (
-                    <button key={d.slug} onClick={() => { setActiveDistrict(d); fetchMsgs(d.slug); setIsSidebarOpen(false); }} className={`w-full flex items-center justify-between p-3 rounded border text-[10px] font-black uppercase ${activeDistrict?.slug === d.slug ? 'bg-emerald-500/10 border-emerald-500/40 text-white' : 'border-transparent text-zinc-500'}`}>
-                      {d.name} <span className="opacity-30">{d.min_score}</span>
-                    </button>
-                ))}
             </div>
           </div>
         </aside>
@@ -383,7 +365,7 @@ export default function DashboardPage() {
               <>
                 {(activeFrequency || filterQuery) && (
                   <div className="flex items-center justify-between bg-blue-500/10 border border-blue-500/30 p-2 rounded-lg mb-4">
-                    <span className="text-[10px] text-blue-500 font-black uppercase flex items-center gap-2">LOCKED: {activeFrequency ? `#${activeFrequency}` : filterQuery}</span>
+                    <span className="text-[10px] text-blue-500 font-black uppercase">LOCKED: {activeFrequency ? `#${activeFrequency}` : filterQuery}</span>
                     <button onClick={() => {setActiveFrequency(null); setFilterQuery("");}} className="text-[9px] text-white font-black underline">CLEAR</button>
                   </div>
                 )}
@@ -391,11 +373,10 @@ export default function DashboardPage() {
                 {filteredMessages.map((msg) => {
                   const hasHotTag = msg.content.match(/#\w+/g)?.some(tag => frequencyMap[tag.toUpperCase()] > 5);
                   return (
-                    <div key={msg.id} onClick={() => handleDoubleTap(msg.profile_id)} className={`flex flex-col gap-1 max-w-[95%] cursor-pointer group transition-all`}>
+                    <div key={msg.id} onClick={() => handleDoubleTap(msg.profile_id)} className={`flex flex-col gap-1 max-w-[95%] cursor-pointer group`}>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-black text-zinc-500 uppercase">{msg.profiles?.username || 'ANON'}</span>
                         <span className="text-[8px] text-zinc-800 uppercase">{new Date(msg.created_at).toLocaleTimeString()}</span>
-                        {msg.is_founder_msg && <span className="text-[8px] bg-emerald-500 text-black px-1 font-black">FOUNDER</span>}
                       </div>
                       <div className={`p-4 rounded-xl border transition-all ${hasHotTag ? 'border-blue-500 bg-blue-500/5' : 'border-white/5 bg-white/[0.02]'}`}>
                         <p className={`text-sm ${hasHotTag ? 'text-blue-100' : 'text-zinc-300'}`}>{msg.content}</p>
@@ -433,7 +414,7 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-      {toast && <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[120] bg-emerald-500 text-black px-4 py-2 rounded text-[10px] font-black uppercase">{toast}</div>}
+      {toast && <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[120] bg-emerald-500 text-black px-4 py-2 rounded text-[10px] font-black uppercase shadow-xl">{toast}</div>}
     </div>
   );
 }
