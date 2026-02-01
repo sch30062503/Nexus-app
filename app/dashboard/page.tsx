@@ -47,6 +47,9 @@ export default function DashboardPage() {
   const [megaphone, setMegaphone] = useState<Megaphone>({ msg: "WAITING FOR SIGNAL...", bid: 0, owner: "SYSTEM", decayedPrice: 0 });
   const [floatingPoints, setFloatingPoints] = useState<FloatingPoint[]>([]);
   const [districtActivity, setDistrictActivity] = useState<Record<string, number>>({});
+  
+  // NEW: Presence state added without removing existing counts
+  const [presenceCounts, setPresenceCounts] = useState<Record<string, number>>({});
 
   const lastTap = useRef<number>(0);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -170,6 +173,27 @@ export default function DashboardPage() {
 
   useEffect(() => { loadNexus(); }, []);
 
+  // Presence Listener Loop
+  useEffect(() => {
+    if (!profile || districts.length === 0) return;
+    districts.forEach(district => {
+      const channel = supabase.channel(`presence:${district.slug}`, {
+        config: { presence: { key: profile.id } }
+      });
+      channel
+        .on('presence', { event: 'sync' }, () => {
+          const state = channel.presenceState();
+          setPresenceCounts(prev => ({ ...prev, [district.slug]: Object.keys(state).length }));
+        })
+        .subscribe(async (status) => {
+          if (status === 'SUBSCRIBED' && activeDistrict?.slug === district.slug) {
+            await channel.track({ online_at: new Date().toISOString() });
+          }
+        });
+    });
+    return () => { supabase.removeAllChannels(); };
+  }, [districts, profile, activeDistrict?.slug]);
+
   useEffect(() => {
     if (!activeDistrict || !profile) return;
     const channel = supabase.channel(`nexus-${activeDistrict.slug}`)
@@ -228,12 +252,10 @@ export default function DashboardPage() {
   return (
     <div className={`h-[100dvh] flex flex-col font-mono bg-black text-zinc-400 overflow-hidden ${feverMode ? 'ring-inset ring-4 ring-orange-500/20' : ''}`}>
       
-      {/* --- FLOATING PARTICLES --- */}
       {floatingPoints.map(p => (
         <span key={p.id} style={{ left: p.x, top: p.y }} className="fixed pointer-events-none text-emerald-400 font-black text-[10px] animate-bounce z-[300] -translate-y-8">+1_SIGNAL</span>
       ))}
 
-      {/* --- GLOBAL HUD --- */}
       <div className={`${feverMode ? 'bg-orange-500 animate-pulse' : 'bg-emerald-500'} text-black py-1 px-4 flex justify-between items-center z-[100]`}>
         <span className="text-[10px] font-black uppercase flex items-center gap-1">
           {feverMode ? <Zap size={12} fill="black"/> : <Radio size={12}/>} 
@@ -244,7 +266,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* --- HEADER TERMINAL --- */}
       <div className="flex flex-col border-b border-white/5 bg-black/80 z-[70]">
         <div className="flex items-center justify-between px-4 py-3">
             <div className="flex items-center gap-4">
@@ -259,12 +280,16 @@ export default function DashboardPage() {
             </button>
         </div>
 
-        {/* --- DISTRICT NAVIGATION WITH COUNTS --- */}
+        {/* UPDATED: Presence + Count integration */}
+        
         <div className="flex items-center gap-2 px-4 pb-3 overflow-x-auto no-scrollbar scroll-smooth">
             {districts.map((d) => {
                 const isLocked = (profile.signal_score || 0) < d.min_score;
                 const isActive = activeDistrict?.slug === d.slug;
                 const count = districtActivity[d.slug] || 0;
+                const liveUnits = presenceCounts[d.slug] || 0;
+                const isHeat = liveUnits >= 100;
+
                 return (
                     <button 
                         key={d.slug} 
@@ -274,11 +299,16 @@ export default function DashboardPage() {
                         ${isActive ? 'bg-emerald-500 border-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.3)]' : 
                           isLocked ? 'border-white/5 text-zinc-800 cursor-not-allowed opacity-50' : 'border-white/10 text-zinc-400 hover:border-emerald-500/50'}`}
                     >
-                        {isLocked ? <Lock size={10}/> : <Radio size={10} className={isActive ? "animate-pulse" : ""}/>}
+                        {isLocked ? <Lock size={10}/> : <Users size={10} className={`${isActive ? "animate-pulse" : ""} ${isHeat ? "text-orange-500" : ""}`}/>}
                         <div className="flex flex-col items-start leading-none">
                             <span>{d.name}</span>
                             <span className={`text-[7px] mt-0.5 ${isActive ? 'text-black/60' : 'text-zinc-600'}`}>
-                              {isLocked ? `REQ: ${d.min_score}` : `${count} SIGNALS`}
+                              {isLocked ? `REQ: ${d.min_score}` : (
+                                <span className="flex gap-2">
+                                  <b className={`${isHeat ? 'text-orange-500 animate-pulse' : isActive ? 'text-black' : 'text-emerald-400'}`}>{liveUnits} LIVE {isHeat && "🔥"}</b> 
+                                  <span>| {count} SIGS</span>
+                                </span>
+                              )}
                             </span>
                         </div>
                     </button>
@@ -288,7 +318,6 @@ export default function DashboardPage() {
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* --- SIDEBAR --- */}
         <aside className={`fixed inset-0 z-[80] lg:relative lg:translate-x-0 w-full sm:w-80 bg-black border-r border-white/5 flex flex-col transition-transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
           <div className="flex items-center justify-between p-6 border-b border-white/5">
               <span className="text-xs font-black text-emerald-500 uppercase tracking-widest">Control_Center</span>
@@ -305,7 +334,6 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* IDENTITY TUNER (RESTORED) */}
             <div className="p-4 border border-white/10 bg-white/5 rounded-xl space-y-3">
               <p className="text-[10px] text-zinc-600 font-black uppercase flex items-center gap-2"><Settings size={10} /> Identity_Tuner</p>
               <div className="flex gap-2">
@@ -321,7 +349,6 @@ export default function DashboardPage() {
               <button onClick={() => setShowMegaModal(true)} className="w-full py-2 bg-emerald-500/10 border border-emerald-500/40 text-emerald-500 text-[9px] font-black uppercase rounded">Takeover</button>
             </div>
 
-            {/* DISTRICT TRENDS (RESTORED) */}
             <div className="space-y-4">
               <p className="text-[10px] text-zinc-600 font-black uppercase flex items-center gap-2"><Hash size={10} /> Trends_In_{activeDistrict?.name}</p>
               <div className="flex flex-wrap gap-2">
@@ -347,7 +374,6 @@ export default function DashboardPage() {
           </div>
         </aside>
 
-        {/* --- MAIN TERMINAL --- */}
         <main className="flex-1 flex flex-col relative bg-black">
           <div className="flex-1 overflow-y-auto p-4 lg:p-10 space-y-6 scrollbar-hide">
             {showLeaderboard ? <Leaderboard /> : (
@@ -382,7 +408,6 @@ export default function DashboardPage() {
         </main>
       </div>
 
-      {/* --- MODAL: TAKEOVER --- */}
       {showMegaModal && (
         <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4">
           <div className="w-full max-w-md border border-emerald-500/30 bg-zinc-950 p-6 rounded-2xl space-y-6">
