@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
-  LayoutGrid, Lock, Globe, Wallet, BarChart3, Activity, Hash, Zap, Radio, X, Landmark, Trophy, Users, ChevronRight 
+  LayoutGrid, Lock, Globe, Wallet, BarChart3, Activity, Hash, Zap, Radio, X, Landmark, Trophy, Users, ShieldAlert, RefreshCcw, Plus 
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -23,22 +23,9 @@ export default function DashboardPage() {
   const channelRef = useRef<any>(null);
 
   // --- DERIVED DATA ---
-  // Fixes the "subTiers" and "isFinanceSector" errors
-  const isFinanceSector = useMemo(() => 
-    activeDistrict?.slug === 'finance' || activeDistrict?.slug?.startsWith('finance-'), 
-    [activeDistrict]
-  );
-
-  const subTiers = useMemo(() => 
-    districts.filter(d => d.parent_slug === 'finance'), 
-    [districts]
-  );
-
-  const hasHighYieldTag = useMemo(() => 
-    /#\w+/.test(newMessage) || !!activeHashtag, 
-    [newMessage, activeHashtag]
-  );
-
+  const isFinanceSector = useMemo(() => activeDistrict?.slug === 'finance' || activeDistrict?.slug?.startsWith('finance-'), [activeDistrict]);
+  const subTiers = useMemo(() => districts.filter(d => d.parent_slug === 'finance'), [districts]);
+  const hasHighYieldTag = useMemo(() => /#\w+/.test(newMessage) || !!activeHashtag, [newMessage, activeHashtag]);
   const currentReward = hasHighYieldTag ? 5 : 3;
   const isDividendEligible = profile?.signal_to_spend >= 10000;
 
@@ -56,28 +43,17 @@ export default function DashboardPage() {
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
   }, [messages]);
 
-  // --- LOGIC ---
+  // --- CORE LOGIC ---
   const loadNexus = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return router.replace("/");
-    
     const [pRes, dRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", session.user.id).single(),
       supabase.from("districts").select("*").order('min_score', { ascending: true })
     ]);
-
     if (pRes.data) setProfile(pRes.data);
     if (dRes.data) setDistricts(dRes.data);
     setLoading(false);
-  };
-
-  const loadLeaderboard = async () => {
-    setView('leaderboard');
-    const { data } = await supabase
-      .from("profiles")
-      .select("username, signal_to_spend, signal_score, vault_signal")
-      .order("signal_to_spend", { ascending: false }).limit(20);
-    if (data) setLeaderboard(data);
   };
 
   const enterRoom = async (district: any) => {
@@ -86,20 +62,12 @@ export default function DashboardPage() {
     setActiveHashtag(null);
     setView('chat');
     setActiveDistrict(district);
-
-    const { data: history } = await supabase.from("messages")
-      .select("*, profiles(username, signal_score)")
-      .eq("district_slug", district.slug)
-      .order("created_at", { ascending: true }).limit(50);
-    
+    const { data: history } = await supabase.from("messages").select("*, profiles(username, signal_score)").eq("district_slug", district.slug).order("created_at", { ascending: true }).limit(50);
     if (history) setMessages(history);
-
-    const channel = supabase.channel(`room_${district.slug}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `district_slug=eq.${district.slug}` }, 
-      async (payload) => {
-        const { data: senderProfile } = await supabase.from("profiles").select("username, signal_score").eq("id", payload.new.user_id).single();
-        setMessages((prev) => prev.find(m => m.id === payload.new.id) ? prev : [...prev, { ...payload.new, profiles: senderProfile }]);
-      }).subscribe();
+    const channel = supabase.channel(`room_${district.slug}`).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `district_slug=eq.${district.slug}` }, async (payload) => {
+      const { data: senderProfile } = await supabase.from("profiles").select("username, signal_score").eq("id", payload.new.user_id).single();
+      setMessages((prev) => prev.find(m => m.id === payload.new.id) ? prev : [...prev, { ...payload.new, profiles: senderProfile }]);
+    }).subscribe();
     channelRef.current = channel;
   };
 
@@ -120,25 +88,36 @@ export default function DashboardPage() {
     }
   };
 
+  // --- ADMIN TESTING TOOLS ---
+  const triggerManualHarvest = async () => {
+    if (!confirm("Reset all Weekly Pots and move 10% of 10k+ earners to Vault?")) return;
+    await supabase.rpc('weekly_nexus_harvest');
+    loadNexus();
+  };
+
+  const injectTestSignal = async (amount: number) => {
+    const { error } = await supabase.from('profiles').update({ 
+      signal_to_spend: (profile.signal_to_spend || 0) + amount 
+    }).eq('id', profile.id);
+    if (!error) loadNexus();
+  };
+
   useEffect(() => { loadNexus(); }, []);
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [filteredMessages]);
 
-  if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center text-emerald-500 font-mono text-[10px]">RECALIBRATING_ECONOMY...</div>;
+  if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center text-emerald-500 font-mono text-[10px]">RECALIBRATING_NEXUS...</div>;
 
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
-      {/* NAV */}
+      {/* NAV (Centered Text Restored) */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
-        <button onClick={() => setView('admin')} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 bg-emerald-500/5' : 'hover:text-white'}`}>
+        <button onClick={() => setView('admin')} className={`flex items-center justify-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 bg-emerald-500/5' : 'hover:text-white'}`}>
           <LayoutGrid size={16} /> <span className="text-xs font-black uppercase">Dashboard</span>
-        </button>
-        <button onClick={loadLeaderboard} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'leaderboard' ? 'text-blue-400 bg-blue-400/5' : 'hover:text-white'}`}>
-          <Users size={16} /> <span className="text-xs font-black uppercase">Ranks</span>
         </button>
         <div className="flex items-center gap-6 border-l border-white/10 pl-8">
           {districts.filter(d => !d.parent_slug).map(d => (
-            <button key={d.slug} disabled={profile.signal_score < d.min_score} onClick={() => enterRoom(d)} className={`text-[10px] font-black uppercase transition-all ${activeDistrict?.slug === d.slug && view === 'chat' ? 'text-emerald-400' : 'text-zinc-600'}`}>
-              {profile.signal_score < d.min_score && <Lock size={10} className="inline mr-1" />} {d.name}
+            <button key={d.slug} disabled={profile.signal_score < d.min_score} onClick={() => enterRoom(d)} className={`flex items-center justify-center text-[10px] font-black uppercase transition-all ${activeDistrict?.slug === d.slug && view === 'chat' ? 'text-emerald-400' : 'text-zinc-600'}`}>
+              {profile.signal_score < d.min_score && <Lock size={10} className="mr-1" />} {d.name}
             </button>
           ))}
         </div>
@@ -155,7 +134,7 @@ export default function DashboardPage() {
       </nav>
 
       <main className="flex-1 overflow-hidden">
-        {view === 'admin' && (
+        {view === 'admin' ? (
           <div className="h-full max-w-6xl mx-auto p-12 space-y-12 overflow-y-auto">
             <header className="flex justify-between items-end border-b border-white/5 pb-10">
               <div>
@@ -169,47 +148,52 @@ export default function DashboardPage() {
                 </p>
               </div>
             </header>
+
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center">
-                <Wallet className="mx-auto text-emerald-500 mb-6" size={24} />
+              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center flex flex-col items-center">
+                <Wallet className="text-emerald-500 mb-6" size={24} />
                 <p className="text-[10px] text-zinc-500 font-bold uppercase">Weekly_Pot</p>
                 <p className="text-4xl font-black text-white">{profile.signal_to_spend || 0}</p>
               </div>
-              <div className="p-8 bg-black border border-emerald-500/20 text-center shadow-[inset_0_0_20px_rgba(16,185,129,0.05)]">
-                <Landmark className="mx-auto text-emerald-400 mb-6" size={24} />
+              <div className="p-8 bg-black border border-emerald-500/20 text-center flex flex-col items-center shadow-[inset_0_0_20px_rgba(16,185,129,0.05)]">
+                <Landmark className="text-emerald-400 mb-6" size={24} />
                 <p className="text-[10px] text-emerald-500/50 font-bold uppercase">Permanent_Vault</p>
                 <p className="text-4xl font-black text-white">{profile.vault_signal || 0}</p>
               </div>
-              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center">
-                <BarChart3 className="mx-auto text-blue-500 mb-6" size={24} />
+              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center flex flex-col items-center">
+                <BarChart3 className="text-blue-500 mb-6" size={24} />
                 <p className="text-[10px] text-zinc-500 font-bold uppercase">Global_Status</p>
                 <p className="text-4xl font-black text-white">{profile.signal_score || 0}</p>
               </div>
-              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center">
-                <Activity className="mx-auto text-purple-500 mb-6" size={24} />
+              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center flex flex-col items-center">
+                <Activity className="text-purple-500 mb-6" size={24} />
                 <p className="text-[10px] text-zinc-500 font-bold uppercase">Finance_XP</p>
                 <p className="text-4xl font-black text-white">{profile.finance_xp || 0}</p>
               </div>
             </div>
-          </div>
-        )}
 
-        {view === 'leaderboard' && (
-          <div className="h-full max-w-4xl mx-auto p-12 overflow-y-auto">
-             <h3 className="text-2xl font-black text-white uppercase mb-8 flex items-center gap-4"><Trophy className="text-yellow-500" /> Weekly_Standings</h3>
-             <div className="border border-white/5 bg-black/50">
-                {leaderboard.map((user, i) => (
-                  <div key={user.username} className="grid grid-cols-3 p-4 border-b border-white/5 items-center">
-                    <span className="text-white font-bold">#{i+1} {user.username}</span>
-                    <span className="text-right text-emerald-500 font-black">{user.signal_to_spend} Pot</span>
-                    <span className="text-right text-zinc-500">{user.vault_signal} Vault</span>
-                  </div>
-                ))}
-             </div>
+            {/* TESTING SUITE */}
+            <div className="mt-20 border border-red-500/10 bg-red-500/5 p-8">
+              <div className="flex items-center gap-3 mb-6 text-red-500">
+                <ShieldAlert size={20} />
+                <h3 className="text-xs font-black uppercase tracking-[0.3em]">Internal_Testing_Suite</h3>
+              </div>
+              <div className="flex gap-4">
+                <button onClick={() => injectTestSignal(2500)} className="flex items-center gap-2 bg-white/5 border border-white/10 px-4 py-3 text-[10px] font-black hover:bg-white/10 transition-all uppercase">
+                  <Plus size={14} /> Add 2.5k Signal
+                </button>
+                <button onClick={() => injectTestSignal(10000)} className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-4 py-3 text-[10px] font-black text-emerald-500 hover:bg-emerald-500/20 transition-all uppercase">
+                  <Plus size={14} /> Jump to 10k Milestone
+                </button>
+                <button onClick={triggerManualHarvest} className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 px-4 py-3 text-[10px] font-black text-red-400 hover:bg-red-500/20 transition-all uppercase ml-auto">
+                  <RefreshCcw size={14} /> Force Weekly Harvest
+                </button>
+              </div>
+              <p className="text-[8px] text-zinc-600 mt-4 uppercase font-bold tracking-widest italic">Note: These tools bypass validation for rapid testing of the 10% dividend gate logic.</p>
+            </div>
           </div>
-        )}
-
-        {view === 'chat' && (
+        ) : (
+          /* CHAT INTERFACE (Buttons Centered) */
           <div className="h-full flex relative">
             {isFinanceSector && (
               <aside className="w-52 border-r border-white/5 bg-black flex flex-col p-4 gap-4">
@@ -223,10 +207,11 @@ export default function DashboardPage() {
             )}
             
             <div className="flex-1 flex flex-col bg-black relative">
-              <div className="px-8 py-3 border-b border-white/5 flex justify-between bg-black">
+              <div className="px-8 py-3 border-b border-white/5 flex justify-between items-center bg-black">
                 <span className="text-[10px] font-black text-white uppercase">{activeDistrict?.name}</span>
-                {activeHashtag && <button onClick={() => setActiveHashtag(null)} className="text-[9px] text-emerald-500 font-black"><X size={10} className="inline mr-1" /> Clear_Filter</button>}
+                {activeHashtag && <button onClick={() => setActiveHashtag(null)} className="text-[9px] text-emerald-500 font-black flex items-center gap-1"><X size={10} /> Clear_Filter</button>}
               </div>
+
               <div className="flex-1 overflow-y-auto p-8 space-y-6">
                 {filteredMessages.map((m) => (
                   <div key={m.id} className="border-l-2 border-white/10 pl-4 py-1">
@@ -236,6 +221,7 @@ export default function DashboardPage() {
                 ))}
                 <div ref={scrollRef} />
               </div>
+
               <div className="p-8 border-t border-white/5 bg-black relative">
                 <div className="absolute -top-6 left-8 h-6 flex items-center gap-2">
                   {hasHighYieldTag ? (
@@ -247,6 +233,7 @@ export default function DashboardPage() {
                   )}
                   {isDividendEligible && <span className="text-[8px] font-black text-emerald-600 uppercase border-l border-white/10 pl-2">Vault_Dividend_Active (10%)</span>}
                 </div>
+
                 <form onSubmit={transmitSignal} className="max-w-2xl mx-auto flex bg-white/5 border border-white/10 relative">
                   <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase" placeholder="TRANSMIT_SIGNAL..." />
                   <button type="submit" className="px-8 bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black transition-all">Broadcast</button>
@@ -256,6 +243,7 @@ export default function DashboardPage() {
                 </form>
               </div>
             </div>
+
             <aside className="w-64 border-l border-white/5 p-6 bg-black">
               <p className="text-[10px] font-black text-zinc-500 uppercase mb-4 flex items-center gap-2"><Hash size={14}/> Trending_Local</p>
               <div className="space-y-2">
