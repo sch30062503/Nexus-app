@@ -27,10 +27,13 @@ export default function DashboardPage() {
   const subTiers = useMemo(() => districts.filter(d => d.parent_slug === 'finance'), [districts]);
   
   const isFinanceSector = activeDistrict?.slug === 'finance' || activeDistrict?.slug.startsWith('finance-');
+  
+  // High-value signal detection for the green flash
   const hasHashtag = useMemo(() => /#\w+/.test(newMessage), [newMessage]);
   const currentReward = hasHashtag || activeHashtag ? 5 : 3;
 
-  const trendingTags = useMemo(() => {
+  // FIXED: Localized Trending (Only shows tags for the CURRENT district)
+  const localizedTrending = useMemo(() => {
     const counts: Record<string, number> = {};
     messages.forEach(m => {
       const tags = m.content.match(/#\w+/g);
@@ -62,7 +65,7 @@ export default function DashboardPage() {
   const enterRoom = async (district: any) => {
     setView('chat');
     setActiveDistrict(district);
-    setActiveHashtag(null);
+    setActiveHashtag(null); // Reset filter when switching rooms
     
     const { data } = await supabase.from("messages")
       .select("*, profiles(username, signal_score)")
@@ -108,7 +111,6 @@ export default function DashboardPage() {
 
     if (!error) {
       setNewMessage("");
-      // Refresh profile to see immediate XP gain
       const { data } = await supabase.from("profiles").select("*").eq("id", profile.id).single();
       if (data) setProfile(data);
     }
@@ -117,11 +119,7 @@ export default function DashboardPage() {
   useEffect(() => { loadNexus(); }, []);
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [filteredMessages]);
 
-  if (loading || !profile) return (
-    <div className="h-screen bg-black flex items-center justify-center font-mono text-emerald-500 animate-pulse text-[10px] tracking-[0.5em]">
-      SYNCING_SYSTEM_RESOURCES
-    </div>
-  );
+  if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center font-mono text-emerald-500 animate-pulse text-[10px]">SYNCING_RESOURCES...</div>;
 
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
@@ -130,14 +128,14 @@ export default function DashboardPage() {
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
         <button onClick={() => setView('admin')} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 border border-emerald-500/20 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'hover:text-white'}`}>
           <LayoutGrid size={16} />
-          <span className="text-xs font-black uppercase tracking-widest text-shadow-glow">Dashboard</span>
+          <span className="text-xs font-black uppercase tracking-widest">Dashboard</span>
         </button>
 
         <div className="w-[1px] h-6 bg-white/10" />
 
         <div className="flex items-center gap-6">
           {theLobby && (
-            <button onClick={() => enterRoom(theLobby)} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${activeDistrict?.slug === 'lobby' && view === 'chat' ? 'text-blue-400 border border-blue-400/20 bg-blue-400/5' : 'hover:text-white'}`}>
+            <button onClick={() => enterRoom(theLobby)} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${activeDistrict?.slug === 'lobby' && view === 'chat' ? 'text-blue-400 border border-blue-400/20 bg-blue-400/5 shadow-[0_0_10px_rgba(96,165,250,0.1)]' : 'hover:text-white'}`}>
               <Globe size={16} />
               <span className="text-xs font-black uppercase tracking-widest">The_Lobby</span>
             </button>
@@ -146,7 +144,7 @@ export default function DashboardPage() {
           {mainHubs.map(n => {
             const isLocked = profile.signal_score < n.min_score;
             return (
-              <button key={n.slug} disabled={isLocked} onClick={() => enterRoom(n)} className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all ${isLocked ? 'text-zinc-800 cursor-not-allowed' : 'text-zinc-600 hover:text-white'} ${activeDistrict?.slug === n.slug && view === 'chat' ? 'text-emerald-400' : ''}`}>
+              <button key={n.slug} disabled={isLocked} onClick={() => enterRoom(n)} className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all ${isLocked ? 'text-zinc-800' : 'text-zinc-600 hover:text-white'} ${activeDistrict?.slug === n.slug && view === 'chat' ? 'text-emerald-400' : ''}`}>
                 {isLocked && <Lock size={10} />} {n.name}
               </button>
             );
@@ -161,8 +159,8 @@ export default function DashboardPage() {
 
       <main className="flex-1 overflow-hidden bg-[#020202]">
         {view === 'admin' ? (
-          /* DASHBOARD */
-          <div className="h-full overflow-y-auto max-w-6xl mx-auto p-12 space-y-12">
+          /* DASHBOARD (REMAINS UNCHANGED) */
+          <div className="h-full max-w-6xl mx-auto p-12 space-y-12">
             <header className="border-b border-white/5 pb-10">
               <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em]">Node_Operator</p>
               <h2 className="text-4xl font-black text-white uppercase tracking-tighter">{profile.username}</h2>
@@ -171,17 +169,17 @@ export default function DashboardPage() {
               <div className="p-8 bg-zinc-900/30 border border-white/5">
                 <Wallet className="text-emerald-500 mb-6" size={28} />
                 <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Spendable_Signal</p>
-                <p className="text-4xl font-black text-white tabular-nums tracking-tighter">{profile.signal_to_spend || 0}</p>
+                <p className="text-4xl font-black text-white tabular-nums">{profile.signal_to_spend || 0}</p>
               </div>
               <div className="p-8 bg-zinc-900/30 border border-white/5">
                 <BarChart3 className="text-blue-500 mb-6" size={28} />
                 <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Global_Score</p>
-                <p className="text-4xl font-black text-white tabular-nums tracking-tighter">{profile.signal_score || 0}</p>
+                <p className="text-4xl font-black text-white tabular-nums">{profile.signal_score || 0}</p>
               </div>
               <div className="p-8 bg-zinc-900/30 border border-white/5">
                 <Activity className="text-purple-500 mb-6" size={28} />
                 <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Finance_XP</p>
-                <p className="text-4xl font-black text-white tabular-nums tracking-tighter">{profile.finance_xp || 0}</p>
+                <p className="text-4xl font-black text-white tabular-nums">{profile.finance_xp || 0}</p>
               </div>
             </div>
           </div>
@@ -189,30 +187,20 @@ export default function DashboardPage() {
           /* CHAT INTERFACE */
           <div className="h-full flex relative">
             
-            {/* SECTOR SIDEBAR */}
             {isFinanceSector && (
               <aside className="w-52 border-r border-white/5 bg-black flex flex-col p-4 gap-4 animate-in slide-in-from-left">
                 <div className="flex flex-col gap-1 mb-2">
-                  <div className="flex items-center gap-2 text-emerald-500">
-                    <Layers size={14} />
-                    <span className="text-[9px] font-black uppercase tracking-tighter">Finance_Tiers</span>
-                  </div>
+                  <div className="flex items-center gap-2 text-emerald-500"><Layers size={14} /><span className="text-[9px] font-black uppercase tracking-tighter">Finance_Tiers</span></div>
                   <p className="text-[8px] text-zinc-600 font-bold uppercase tracking-widest">Local_XP: {profile.finance_xp || 0}</p>
                 </div>
-                
                 <div className="flex flex-col gap-2">
                   {subTiers.map(tier => {
                     const isLocked = (profile.finance_xp || 0) < tier.min_score;
                     const progress = Math.min(100, ((profile.finance_xp || 0) / tier.min_score) * 100);
                     return (
-                      <button key={tier.slug} disabled={isLocked} onClick={() => enterRoom(tier)} className={`text-left p-3 rounded border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400 shadow-[inset_0_0_10px_rgba(16,185,129,0.05)]' : isLocked ? 'border-zinc-900 text-zinc-800' : 'border-white/5 text-zinc-600 hover:text-white'}`}>
-                        <div className="flex justify-between items-center mb-1">
-                          <span className="text-[9px] font-bold uppercase truncate">{tier.name}</span>
-                          {isLocked && <Lock size={8} />}
-                        </div>
-                        <div className="h-1 w-full bg-zinc-900 rounded-full overflow-hidden">
-                          <div className={`h-full bg-emerald-500 transition-all duration-1000 ${isLocked ? 'opacity-20' : 'shadow-[0_0_8px_#10b981]'}`} style={{ width: `${progress}%` }} />
-                        </div>
+                      <button key={tier.slug} disabled={isLocked} onClick={() => enterRoom(tier)} className={`text-left p-3 rounded border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400' : isLocked ? 'border-zinc-900 text-zinc-800' : 'border-white/5 text-zinc-600 hover:text-white'}`}>
+                        <div className="flex justify-between items-center mb-1"><span className="text-[9px] font-bold uppercase truncate">{tier.name}</span>{isLocked && <Lock size={8} />}</div>
+                        <div className="h-1 w-full bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 transition-all duration-1000" style={{ width: `${progress}%` }} /></div>
                       </button>
                     );
                   })}
@@ -220,25 +208,31 @@ export default function DashboardPage() {
               </aside>
             )}
 
-            {/* MAIN CHAT */}
             <div className="flex-1 flex flex-col relative bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:40px_40px]">
+              
               <div className="px-8 py-3 border-b border-white/5 bg-black/80 flex items-center justify-between z-10">
                 <div className="flex items-center gap-3">
                   {isFinanceSector ? <DollarSign className="text-emerald-500" size={14} /> : <Radio className="text-blue-400" size={14} />}
                   <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">{activeDistrict.name}</span>
                 </div>
+                {/* RESTORED: Clear Filter Button */}
+                {activeHashtag && (
+                  <button onClick={() => setActiveHashtag(null)} className="text-[9px] flex items-center gap-1.5 text-emerald-500 hover:text-white uppercase font-black animate-pulse">
+                    <X size={12} /> Clear_Filter [{activeHashtag}]
+                  </button>
+                )}
               </div>
 
               <div className="flex-1 overflow-y-auto scrollbar-hide">
                 <div className="max-w-2xl mx-auto p-8 space-y-8">
                   {filteredMessages.map((m) => (
-                    <div key={m.id} className="flex flex-col gap-1.5 animate-in fade-in">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black uppercase text-white/50">{m.profiles?.username}</span>
-                        <span className="text-[8px] font-bold text-zinc-700">[{m.profiles?.signal_score}]</span>
+                    <div key={m.id} className="flex flex-col gap-1.5">
+                      <div className="flex items-center gap-2 opacity-50">
+                        <span className="text-[10px] font-black uppercase text-white">{m.profiles?.username}</span>
+                        <span className="text-[8px] font-bold">[{m.profiles?.signal_score}]</span>
                       </div>
-                      <div className="bg-white/[0.02] border-l border-white/10 p-4">
-                        <p className="text-[15px] text-zinc-300">{m.content}</p>
+                      <div className={`bg-white/[0.02] border-l p-4 ${isFinanceSector ? 'border-emerald-500/20' : 'border-white/10'}`}>
+                        <p className="text-[15px] text-zinc-300 leading-relaxed">{m.content}</p>
                       </div>
                     </div>
                   ))}
@@ -246,37 +240,46 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* INPUT AREA */}
               <div className="p-8 border-t border-white/5 bg-black">
                 <form onSubmit={transmitSignal} className="max-w-2xl mx-auto">
-                  <div className={`flex items-center bg-white/5 border rounded-sm overflow-hidden transition-all ${isFinanceSector ? 'border-emerald-500/20 focus-within:border-emerald-500' : 'border-white/10 focus-within:border-emerald-500/50'}`}>
-                    <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase placeholder:text-zinc-800" placeholder="TRANSMIT..." />
-                    <button type="submit" className="px-8 h-full bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500">Broadcast</button>
+                  <div className={`flex items-center bg-white/5 border rounded-sm transition-all ${isFinanceSector ? 'border-emerald-500/20 focus-within:border-emerald-500' : 'border-white/10 focus-within:border-emerald-500/50'}`}>
+                    <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase" placeholder="TRANSMIT_SIGNAL..." />
+                    <button type="submit" className="px-8 h-full bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black">Broadcast</button>
                   </div>
+                  {/* RESTORED: Flashing Reward UI */}
                   <div className="flex justify-between mt-2 px-1">
-                    <p className="text-[8px] text-zinc-700 font-black uppercase tracking-widest">Potential_Yield: {currentReward} SP</p>
-                    <p className="text-[8px] text-zinc-500 uppercase font-black">{isFinanceSector ? ">>> ROUTING_TO_FINANCE_XP" : ">>> GLOBAL_ROUTING"}</p>
+                    <p className={`text-[8px] uppercase font-black transition-all duration-300 ${hasHashtag ? 'text-emerald-400 animate-pulse' : 'text-zinc-700'}`}>
+                      {hasHashtag ? '>>> HIGH_VALUE_INTEL_DETECTED' : '>>> STANDARD_SIGNAL'}
+                    </p>
+                    <p className={`text-[8px] uppercase font-black ${hasHashtag ? 'text-emerald-500' : 'text-zinc-500'}`}>
+                      Yield: {currentReward} SP
+                    </p>
                   </div>
                 </form>
               </div>
             </div>
 
-            {/* SIDEBAR */}
             <aside className="w-80 bg-black border-l border-white/5 p-6 flex flex-col gap-8">
-               <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-zinc-500"><Hash size={16} /><h3 className="text-[11px] font-black uppercase tracking-widest">Trending</h3></div>
-                  {trendingTags.map(([tag, count]) => (
-                    <button key={tag} onClick={() => setActiveHashtag(tag)} className="w-full flex justify-between items-center p-3 bg-white/5 border border-white/5 text-[10px] font-bold">
-                      <span className="text-zinc-400">{tag}</span>
-                      <span className="opacity-30">{count}</span>
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-zinc-500"><Hash size={16} /><h3 className="text-[11px] font-black uppercase tracking-widest">Trending_Local</h3></div>
+                <div className="space-y-2">
+                  {localizedTrending.map(([tag, count]) => (
+                    <button 
+                      key={tag} 
+                      onClick={() => setActiveHashtag(tag)} 
+                      className={`w-full flex justify-between items-center p-3 rounded-sm border transition-all ${activeHashtag === tag ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.1)]' : 'bg-white/5 border-white/5 text-zinc-500 hover:border-white/20'}`}
+                    >
+                      <span className="text-[10px] font-bold tracking-widest">{tag}</span>
+                      <span className="text-[8px] font-black opacity-30">{count}</span>
                     </button>
                   ))}
-               </div>
-               <div className={`mt-auto p-4 border rounded ${isFinanceSector ? 'border-emerald-500/20 bg-emerald-500/[0.02]' : 'border-blue-500/20 bg-blue-500/[0.02]'}`}>
-                <p className="text-[9px] font-black uppercase mb-2 text-zinc-500">Protocol_Value</p>
-                <div className="space-y-1 text-[9px] uppercase font-bold">
-                  <div className="flex justify-between"><span>Base Signal</span><span className="text-zinc-300">3 SP</span></div>
-                  <div className="flex justify-between text-emerald-500"><span>Tagged Intel</span><span>5 SP</span></div>
+                </div>
+              </div>
+              <div className={`mt-auto p-4 border rounded ${isFinanceSector ? 'border-emerald-500/20 bg-emerald-500/[0.02]' : 'border-blue-500/20 bg-blue-500/[0.02]'}`}>
+                <p className="text-[9px] font-black uppercase mb-2 text-zinc-500">Yield_Protocol</p>
+                <div className="space-y-1 text-[9px] font-bold uppercase">
+                  <div className="flex justify-between"><span>Base</span><span className="text-zinc-300">3 SP</span></div>
+                  <div className="flex justify-between text-emerald-500"><span>Intel Tag</span><span>5 SP</span></div>
                 </div>
               </div>
             </aside>
