@@ -3,13 +3,48 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, Timer, Activity, Flame, Lock, Trash2, ShieldCheck, ChevronRight } from "lucide-react";
+import { 
+  Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, 
+  Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, 
+  Timer, Activity, Flame, Lock, Trash2, ShieldCheck, ChevronRight 
+} from "lucide-react";
 import Leaderboard from "@/components/Leaderboard";
 
-// ... (Types remain the same as your snippet)
+// --- TYPES & INTERFACES ---
+interface District { 
+  slug: string; 
+  name: string; 
+  min_score: number; 
+  description: string; 
+  parent_slug?: string; 
+}
+
+interface Profile { 
+  id: string; 
+  username: string | null; 
+  signal_score: number; 
+  is_founder: boolean | null;
+  referral_code: string;
+}
+
+interface Message { 
+  id: string; 
+  content: string; 
+  created_at: string; 
+  district_slug: string; 
+  profile_id: string; 
+  profiles?: { username: string | null, signal_score: number } 
+}
+
+interface Megaphone { 
+  msg: string; 
+  bid: number; 
+  owner: string; 
+  decayedPrice: number 
+}
 
 export default function DashboardPage() {
-  const router = useRouter(); // Simplified router access
+  const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [districts, setDistricts] = useState<District[]>([]);
   const [activeDistrict, setActiveDistrict] = useState<District | null>(null);
@@ -22,37 +57,52 @@ export default function DashboardPage() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [timeLeft, setTimeLeft] = useState("");
-  const [megaphone, setMegaphone] = useState<Megaphone>({ msg: "WAITING FOR SIGNAL...", bid: 0, owner: "SYSTEM", decayedPrice: 0 });
+  const [filterQuery, setFilterQuery] = useState(""); // Added for search logic
+  const [megaphone, setMegaphone] = useState<Megaphone>({ 
+    msg: "WAITING FOR SIGNAL...", 
+    bid: 0, 
+    owner: "SYSTEM", 
+    decayedPrice: 0 
+  });
   const [presenceCounts, setPresenceCounts] = useState<Record<string, number>>({});
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // --- NEW FUNNEL LOGIC ---
-  
-  // 1. Separate the Global Lobby from the Niche Sectors
   const funnel = useMemo(() => {
     const lobby = districts.find(d => d.slug === 'lobby' || d.min_score === 0);
     const sectors = districts.filter(d => !d.parent_slug && d.slug !== lobby?.slug);
     return { lobby, sectors };
   }, [districts]);
 
-  // 2. Identify Sub-Rooms (Tiers) for the currently active Sector
   const activeTiers = useMemo(() => {
     if (!activeDistrict) return [];
-    // If we are in a sub-room, find its siblings. If in a sector, find its children.
     const parentSlug = activeDistrict.parent_slug || activeDistrict.slug;
     return districts.filter(d => d.parent_slug === parentSlug);
   }, [districts, activeDistrict]);
+
+  const filteredMessages = useMemo(() => {
+    return messages.filter(m => 
+      m.content.toLowerCase().includes(filterQuery.toLowerCase())
+    );
+  }, [messages, filterQuery]);
 
   // --- DATA LOADING ---
   const loadNexus = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return router.replace("/");
 
-    const { data: pData } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
+    const { data: pData } = await supabase.from("profiles")
+      .select("*")
+      .eq("id", session.user.id)
+      .single();
+    
     if (pData) setProfile(pData as Profile);
     
-    const { data: dData } = await supabase.from("districts").select("*").order('min_score', { ascending: true });
+    const { data: dData } = await supabase.from("districts")
+      .select("*")
+      .order('min_score', { ascending: true });
+    
     if (dData) {
       setDistricts(dData);
       const initialDist = dData.find(d => d.slug === 'lobby') || dData[0];
@@ -63,7 +113,11 @@ export default function DashboardPage() {
   };
 
   const fetchMsgs = async (slug: string) => {
-    const { data } = await supabase.from("messages").select("*, profiles(username, signal_score)").eq("district_slug", slug).order("created_at", { ascending: true }).limit(100);
+    const { data } = await supabase.from("messages")
+      .select("*, profiles(username, signal_score)")
+      .eq("district_slug", slug)
+      .order("created_at", { ascending: true })
+      .limit(100);
     if (data) setMessages(data as any);
   };
 
@@ -88,7 +142,13 @@ export default function DashboardPage() {
   useEffect(() => { loadNexus(); }, []);
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  if (loading || !profile) return <div className="h-screen flex items-center justify-center bg-black font-mono text-emerald-500 text-xs animate-pulse">SYNCHRONIZING_NETWORK_HUBS...</div>;
+  if (loading || !profile) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-black font-mono text-emerald-500 text-xs animate-pulse">
+        SYNCHRONIZING_NETWORK_HUBS...
+      </div>
+    );
+  }
 
   return (
     <div className="h-[100dvh] flex flex-col font-mono bg-black text-zinc-400 overflow-hidden">
@@ -101,12 +161,11 @@ export default function DashboardPage() {
         <span className="text-[10px] font-black uppercase">{timeLeft}</span>
       </div>
 
-      {/* --- RESTRUCTURED NAVIGATION --- */}
+      {/* NAVIGATION ARCHITECTURE */}
       <div className="flex flex-col border-b border-white/5 bg-black/80 z-[70]">
         
-        {/* TOP LEVEL: LOBBY & SECTORS */}
+        {/* LOBBY & SECTORS */}
         <div className="flex items-center gap-4 p-4 overflow-x-auto no-scrollbar border-b border-white/5">
-          {/* Always show Lobby */}
           {funnel.lobby && (
             <button 
               onClick={() => { setActiveDistrict(funnel.lobby!); fetchMsgs(funnel.lobby!.slug); }}
@@ -117,7 +176,6 @@ export default function DashboardPage() {
             </button>
           )}
 
-          {/* Show Niche Sectors */}
           {funnel.sectors.map(sector => {
             const isLocked = profile.signal_score < 500;
             const isActive = activeDistrict?.slug === sector.slug || activeDistrict?.parent_slug === sector.slug;
@@ -137,7 +195,7 @@ export default function DashboardPage() {
           })}
         </div>
 
-        {/* SUB LEVEL: GATED TIERS (Only shows if inside a niche sector) */}
+        {/* GATED SUB-TIERS */}
         {activeDistrict?.slug !== 'lobby' && activeTiers.length > 0 && (
           <div className="flex items-center gap-3 px-6 py-2 bg-zinc-900/50">
             <span className="text-[8px] font-black text-blue-500/50 uppercase tracking-widest">Gated_Tiers:</span>
@@ -160,19 +218,18 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* MAIN CONTENT AREA */}
       <div className="flex-1 flex overflow-hidden">
         <main className="flex-1 flex flex-col relative bg-black">
-          
-          {/* CURRENT ROOM INFO */}
+          {/* HEADER */}
           <div className="px-6 py-2 bg-white/5 flex justify-between items-center border-b border-white/5">
              <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full animate-pulse ${activeDistrict?.slug === 'lobby' ? 'bg-emerald-500' : 'bg-blue-500'}`} />
                 <span className="text-[10px] font-black text-white uppercase">{activeDistrict?.name}</span>
              </div>
-             <span className="text-[9px] text-zinc-500">POPULATION: {presenceCounts[activeDistrict?.slug || ''] || 0}</span>
+             <span className="text-[9px] text-zinc-500 uppercase tracking-tighter">Your_Signal: {profile.signal_score}</span>
           </div>
 
+          {/* CHAT FEED */}
           <div className="flex-1 overflow-y-auto p-4 lg:p-10 space-y-6 scrollbar-hide">
             {filteredMessages.map((msg) => (
               <div key={msg.id} className="flex flex-col gap-1 max-w-[95%] group">
@@ -188,7 +245,7 @@ export default function DashboardPage() {
             <div ref={scrollRef} />
           </div>
 
-          {/* INPUT AREA */}
+          {/* INPUT BAR */}
           <div className="p-4 lg:p-8 bg-black">
             <form onSubmit={sendMessage} className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-1">
               <input 
