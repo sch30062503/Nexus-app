@@ -46,14 +46,18 @@ export default function SignupPage() {
   return (
     <div className="h-screen bg-black flex flex-col items-center justify-center font-mono p-4">
       <div className="w-full max-w-sm border border-emerald-500/20 bg-emerald-500/5 p-8 rounded-2xl backdrop-blur-xl">
+        {/* LOGO & HEADER */}
         <div className="flex flex-col items-center mb-8">
           <div className="p-3 bg-emerald-500 rounded-full mb-4">
             <Zap size={24} className="text-black" />
           </div>
           <h1 className="text-xl font-black text-white tracking-[0.3em] uppercase">Initialize</h1>
-          <p className="text-[10px] text-emerald-500/60 uppercase tracking-widest mt-2">New_Signal_Unit_Registration</p>
+          <p className="text-[10px] text-emerald-500/60 uppercase tracking-widest mt-2 text-center">
+            New_Signal_Unit_Registration
+          </p>
         </div>
 
+        {/* SIGNUP FORM */}
         <form onSubmit={handleSignup} className="flex flex-col gap-4">
           {error && (
             <div className="bg-red-500/10 border border-red-500/50 p-3 rounded text-red-500 text-[10px] uppercase font-bold text-center">
@@ -91,6 +95,23 @@ export default function SignupPage() {
             {loading ? "Syncing..." : "Activate_Signal"}
           </button>
         </form>
+
+        {/* FOOTER NAVIGATION */}
+        <div className="mt-8 pt-6 border-t border-white/5 flex flex-col gap-3">
+          <button 
+            onClick={() => router.push("/")}
+            className="text-[10px] text-zinc-500 hover:text-emerald-500 uppercase font-black transition-colors flex items-center justify-center gap-2"
+          >
+            Already_Registered? <span className="text-emerald-500">Sign_In</span>
+          </button>
+          
+          <button 
+            onClick={() => router.push("/")}
+            className="text-[9px] text-zinc-700 hover:text-zinc-500 uppercase tracking-widest transition-colors text-center"
+          >
+            [ Return_To_Terminal ]
+          </button>
+        </div>
       </div>
     </div>
   );
