@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
-  LayoutGrid, Lock, Globe, ChevronUp, Wallet, BarChart3, Activity, Hash, Zap, Radio, TrendingUp, X, DollarSign 
+  LayoutGrid, Lock, Globe, ChevronUp, Wallet, BarChart3, Activity, Hash, Zap, Radio, TrendingUp, X, DollarSign, Layers 
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -25,8 +25,13 @@ export default function DashboardPage() {
   const theLobby = useMemo(() => districts.find(d => d.slug === 'lobby'), [districts]);
   const nicheSectors = useMemo(() => districts.filter(d => !d.parent_slug && d.slug !== 'lobby'), [districts]);
 
-  // Sector-Specific Logic
-  const isFinanceSector = activeDistrict?.slug === 'finance';
+  // FINANCE TIER LOGIC
+  // This filters districts that are "children" of finance or follow a finance naming convention
+  const financeTiers = useMemo(() => 
+    districts.filter(d => d.slug.includes('finance') || d.parent_slug === 'finance'), 
+  [districts]);
+  
+  const isFinanceSector = activeDistrict?.slug.includes('finance');
 
   const hasHashtag = useMemo(() => /#\w+/.test(newMessage), [newMessage]);
   const currentReward = hasHashtag || activeHashtag ? 5 : 3;
@@ -132,7 +137,7 @@ export default function DashboardPage() {
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
         <button onClick={() => setView('admin')} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 border border-emerald-500/20 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'hover:text-white'}`}>
           <LayoutGrid size={16} />
-          <span className="text-xs font-black uppercase tracking-widest text-shadow-glow">Dashboard</span>
+          <span className="text-xs font-black uppercase tracking-widest">Dashboard</span>
         </button>
         <div className="w-[1px] h-6 bg-white/10" />
         <div className="flex items-center gap-6">
@@ -144,6 +149,8 @@ export default function DashboardPage() {
           )}
           {nicheSectors.map(n => {
             const isLocked = profile.signal_score < n.min_score;
+            // Filter out specific sub-tiers from the main nav to keep it clean
+            if (n.slug.includes('-tier-')) return null;
             return (
               <button key={n.slug} className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all ${isLocked ? 'text-zinc-800 cursor-not-allowed' : 'text-zinc-600 hover:text-white'} ${activeDistrict?.slug === n.slug && view === 'chat' ? 'text-emerald-400' : ''}`} disabled={isLocked} onClick={() => enterRoom(n)}>
                 {isLocked && <Lock size={10} />} {n.name}
@@ -188,20 +195,55 @@ export default function DashboardPage() {
             </div>
           </div>
         ) : (
-          /* --- CHAT INTERFACE --- */
+          /* --- DISTRICT INTERFACE --- */
           <div className={`h-full flex relative animate-in slide-in-from-bottom duration-500 ${isFinanceSector ? 'bg-[#050505]' : ''}`}>
+            
+            {/* NEW: FINANCE LEFT TIER BAR */}
+            {isFinanceSector && (
+              <aside className="w-48 border-r border-white/5 bg-black flex flex-col p-4 gap-4">
+                <div className="flex items-center gap-2 text-emerald-500 mb-2">
+                  <Layers size={14} />
+                  <span className="text-[9px] font-black uppercase tracking-tighter">Finance_Tiers</span>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {financeTiers.map(tier => {
+                    const isLocked = profile.signal_score < tier.min_score;
+                    return (
+                      <button
+                        key={tier.slug}
+                        disabled={isLocked}
+                        onClick={() => enterRoom(tier)}
+                        className={`text-left p-3 rounded border transition-all ${
+                          activeDistrict.slug === tier.slug 
+                          ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400' 
+                          : isLocked ? 'border-zinc-900 text-zinc-800' : 'border-white/5 text-zinc-600 hover:text-white'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-[9px] font-bold uppercase">{tier.name}</span>
+                          {isLocked && <Lock size={8} />}
+                        </div>
+                        <div className="h-1 w-full bg-zinc-900 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full ${isLocked ? 'bg-zinc-800' : 'bg-emerald-500'}`} 
+                            style={{ width: `${Math.min(100, (profile.signal_score / tier.min_score) * 100)}%` }} 
+                          />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </aside>
+            )}
+
             <div className="flex-1 flex flex-col border-r border-white/5 relative bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:40px_40px]">
-              
-              <div className={`px-8 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md flex items-center justify-between ${isFinanceSector ? 'border-b-emerald-900/30' : ''}`}>
+              <div className={`px-8 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md flex items-center justify-between`}>
                 <div className="flex items-center gap-3">
                   {isFinanceSector ? <DollarSign className="text-emerald-500 animate-pulse" size={14} /> : <Radio className="text-blue-400 animate-pulse" size={14} />}
                   <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">
-                    {isFinanceSector ? 'Financial_Intelligence_Node' : activeHashtag ? `Filtering: ${activeHashtag}` : 'Live_Mining_Feed'}
+                    {activeDistrict.name} {isFinanceSector ? ':: Intel_Feed' : ''}
                   </span>
                 </div>
-                {activeHashtag && (
-                  <button onClick={() => setActiveHashtag(null)} className="text-[8px] flex items-center gap-1 text-zinc-500 hover:text-white uppercase font-black"><X size={10} /> Clear Filter</button>
-                )}
               </div>
 
               <div className="flex-1 overflow-y-auto scrollbar-hide">
@@ -229,7 +271,6 @@ export default function DashboardPage() {
                     <button type="submit" className={`px-8 border-l font-black text-xs uppercase transition-all ${isFinanceSector ? 'bg-emerald-600 text-black border-emerald-500 hover:bg-white' : 'bg-zinc-900 border-white/10 text-emerald-500 hover:bg-emerald-500 hover:text-black'}`}>{isFinanceSector ? 'Commit' : 'Broadcast'}</button>
                   </div>
                   
-                  {/* --- RESTORED MINING INDICATORS --- */}
                   <div className="flex justify-between mt-2">
                     <p className={`text-[8px] uppercase font-black transition-all duration-300 ${currentReward === 5 ? 'text-emerald-400 animate-pulse' : 'text-zinc-700'}`}>
                       {currentReward === 5 ? '>>> HIGH_VALUE_SIGNAL_DETECTED' : '>>> STANDARD_SIGNAL_PROTOCOL'}
@@ -255,7 +296,6 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* --- RESTORED PROTOCOL BOX --- */}
               <div className={`mt-auto p-4 border rounded ${isFinanceSector ? 'border-emerald-500/20 bg-emerald-500/[0.02]' : 'border-blue-500/20 bg-blue-500/[0.02]'}`}>
                 <p className={`text-[9px] font-black uppercase mb-2 ${isFinanceSector ? 'text-emerald-400' : 'text-blue-400'}`}>{isFinanceSector ? 'Finance Protocol' : 'Mining Protocol'}</p>
                 <div className="space-y-1 text-[9px] uppercase font-bold">
