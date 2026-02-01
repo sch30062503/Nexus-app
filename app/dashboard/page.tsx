@@ -3,9 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock } from "lucide-react";
+import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy } from "lucide-react";
+// 1. Import Leaderboard
+import Leaderboard from "@/components/Leaderboard";
 
 type District = { slug: string; name: string; min_score: number; description: string; last_activity?: string };
+
+// 2. Updated Profile Type to include dividend_earned
 type Profile = { 
   id: string; 
   email: string | null; 
@@ -14,7 +18,9 @@ type Profile = {
   is_founder: boolean | null;
   prestige_score: number;
   referral_code: string;
+  dividend_earned: number; // Added
 };
+
 type Message = { id: string; content: string; created_at: string; district_slug: string; is_founder_msg: boolean; profile_id: string; profiles?: { username: string, signal_score: number } };
 type Megaphone = { msg: string; bid: number; owner: string };
 
@@ -30,14 +36,15 @@ export default function DashboardPage() {
   const [onlineCount, setOnlineCount] = useState(1);
   const [isCooldown, setIsCooldown] = useState(false);
   const [feverMode, setFeverMode] = useState(false);
-  const [decree, setDecree] = useState("");
   const [toast, setToast] = useState<string | null>(null);
   const [trendingTags, setTrendingTags] = useState<string[]>([]);
-  const [globalSubjects, setGlobalSubjects] = useState<string[]>([]); 
   const [showSpawner, setShowSpawner] = useState(false);
   const [newDist, setNewDist] = useState({ name: '', slug: '', min: 0, desc: '' });
   const [newUsername, setNewUsername] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  
+  // 3. Leaderboard Toggle State
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
   
   const [timeLeft, setTimeLeft] = useState("");
   const [copied, setCopied] = useState(false);
@@ -55,7 +62,6 @@ export default function DashboardPage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // --- REFERRAL CAPTURE LOGIC ---
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const ref = params.get('ref');
@@ -106,7 +112,7 @@ export default function DashboardPage() {
 
   const copyReferral = () => {
     if (!profile?.referral_code) return;
-    const link = `${window.location.origin}/dashboard?ref=${profile.referral_code}`;
+    const link = `${window.location.origin}/signup?ref=${profile.referral_code}`;
     navigator.clipboard.writeText(link);
     setCopied(true);
     triggerToast("LINK COPIED");
@@ -173,12 +179,6 @@ export default function DashboardPage() {
     if (!error) { setMessages(prev => prev.filter(m => m.id !== id)); triggerToast("SIGNAL PURGED"); }
   };
 
-  const updateIdentity = async () => {
-    if (!newUsername || newUsername.length < 3) return triggerToast("ID TOO SHORT");
-    const { error } = await supabase.from('profiles').update({ username: newUsername }).eq('id', profile?.id);
-    if (!error) { triggerToast("IDENTITY ESTABLISHED"); setProfile(prev => prev ? { ...prev, username: newUsername } : null); setNewUsername(""); }
-  };
-
   const onTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
       touchEnd.current = null;
@@ -192,17 +192,11 @@ export default function DashboardPage() {
     if (distance < -70) setIsSidebarOpen(true);
   };
 
-  // --- UPDATED DOUBLE TAP WITH DIVIDENDS ---
   const handleDoubleTap = async (targetUserId: string) => {
     const now = Date.now();
     if (now - lastTap.current < 300) {
       if (targetUserId === profile?.id) return triggerToast("CANNOT BOOST SELF");
-      
-      await supabase.rpc('increment_signal_with_dividend', { 
-        user_id: targetUserId, 
-        amount: 1 
-      });
-      
+      await supabase.rpc('increment_signal_with_dividend', { user_id: targetUserId, amount: 1 });
       triggerToast("SIGNAL BOOSTED +1");
     }
     lastTap.current = now;
@@ -229,7 +223,6 @@ export default function DashboardPage() {
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  // --- UPDATED SEND MESSAGE WITH DIVIDENDS ---
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !profile || isCooldown || !activeDistrict) return;
@@ -267,6 +260,7 @@ export default function DashboardPage() {
       onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
       className={`h-[100dvh] flex flex-col font-mono transition-colors duration-1000 ${feverMode ? 'bg-[#1a0505]' : 'bg-[#050505]'} text-zinc-400 overflow-hidden select-none`}
     >
+      {/* HEADER */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md z-[70]">
         <div className="flex items-center gap-4">
           <button onClick={() => setIsSidebarOpen(true)} className="p-1 text-emerald-500 lg:hidden active:scale-90 transition-transform"><Menu size={24} /></button>
@@ -275,12 +269,22 @@ export default function DashboardPage() {
             <span className="text-xs text-white font-black uppercase tracking-[0.2em] truncate max-w-[140px]">{activeDistrict?.name || "Initializing..."}</span>
           </div>
         </div>
+        
+        {/* LEADERBOARD TOGGLE BUTTON */}
+        <button 
+          onClick={() => setShowLeaderboard(!showLeaderboard)}
+          className={`px-3 py-1 rounded text-[9px] font-black uppercase border transition-all flex items-center gap-2 ${showLeaderboard ? 'bg-emerald-500 text-black border-emerald-500' : 'text-emerald-500 border-emerald-500/30'}`}
+        >
+          <Trophy size={10} /> {showLeaderboard ? "Close_Rank" : "Rankings"}
+        </button>
+
         <div className="flex flex-col items-end">
           <span className="text-[9px] text-emerald-500 font-black animate-pulse uppercase tracking-tighter">● {onlineCount} Live</span>
           <span className="text-[11px] text-zinc-300 font-black">{profile.signal_score?.toLocaleString()} <span className="text-[7px] text-zinc-600">Pts</span></span>
         </div>
       </div>
 
+      {/* MEGAPHONE BAR */}
       <div className="bg-emerald-500/5 border-b border-emerald-500/20 px-4 py-2 z-40">
         <div className="flex items-center justify-between gap-4 overflow-hidden">
           <div className="flex items-center gap-2 min-w-0">
@@ -292,14 +296,16 @@ export default function DashboardPage() {
       </div>
 
       <div className="flex-1 flex overflow-hidden relative">
+        {/* SIDEBAR */}
         <aside className={`fixed inset-0 z-[80] transform transition-transform duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] lg:relative lg:translate-x-0 lg:z-auto w-full sm:w-80 bg-black/95 backdrop-blur-xl border-r border-white/5 flex flex-col ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
           <div className="flex items-center justify-between p-6 border-b border-white/5">
-             <span className="text-xs font-black text-emerald-500 tracking-[0.2em] uppercase">Control_Center</span>
-             <button onClick={() => setIsSidebarOpen(false)} className="p-2 text-zinc-500 lg:hidden"><X size={20}/></button>
+              <span className="text-xs font-black text-emerald-500 tracking-[0.2em] uppercase">Control_Center</span>
+              <button onClick={() => setIsSidebarOpen(false)} className="p-2 text-zinc-500 lg:hidden"><X size={20}/></button>
           </div>
 
           <div className="p-6 flex-1 overflow-y-auto space-y-8 scrollbar-hide">
-            <div className="mb-8 p-4 border border-emerald-500/40 bg-emerald-500/5 rounded-xl">
+            {/* PRESTIGE PANEL */}
+            <div className="p-4 border border-emerald-500/40 bg-emerald-500/5 rounded-xl">
                 <div className="flex items-center gap-2 mb-1">
                     <Award size={10} className="text-emerald-500" />
                     <h3 className="text-[10px] text-emerald-500/60 uppercase tracking-widest">Lifetime_Prestige</h3>
@@ -310,6 +316,17 @@ export default function DashboardPage() {
                 </div>
             </div>
 
+            {/* NEW: DIVIDEND TRACKER */}
+            <div className="p-4 border border-cyan-500/30 bg-cyan-500/5 rounded-xl">
+                <div className="flex items-center gap-2 mb-1">
+                    <Users size={10} className="text-cyan-500" />
+                    <h3 className="text-[10px] text-cyan-500/60 uppercase tracking-widest">Network_Dividends</h3>
+                </div>
+                <p className="text-xl font-black text-white">+{profile.dividend_earned?.toLocaleString() || 0}</p>
+                <p className="text-[8px] text-zinc-600 uppercase mt-1">Passive_Signal_Generated</p>
+            </div>
+
+            {/* RECRUITMENT LINK */}
             <div className="space-y-3 p-4 border border-white/5 bg-white/5 rounded-xl">
               <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest flex items-center gap-2">
                 <Share2 size={10}/> Recruit_New_Signal
@@ -320,9 +337,10 @@ export default function DashboardPage() {
               >
                 {copied ? "COPIED" : `ID: ${profile.referral_code?.toUpperCase() || '...'}`}
               </button>
-              <p className="text-[8px] text-zinc-500 text-center leading-tight uppercase">Earn 25% Dividends from units recruited via this code.</p>
+              <p className="text-[8px] text-zinc-500 text-center leading-tight uppercase">Earn 25% perpetual dividends from recruited units.</p>
             </div>
 
+            {/* DISTRICTS / ZONES */}
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Zones</p>
@@ -354,19 +372,6 @@ export default function DashboardPage() {
                 })}
               </nav>
             </div>
-
-            <div className="space-y-4">
-              <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest flex items-center gap-2">
-                <Hash size={10} /> Active_Frequencies
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {trendingTags.length > 0 ? trendingTags.map(tag => (
-                  <button key={tag} onClick={() => {setFilterQuery(tag); setIsSidebarOpen(false);}} className="text-[10px] bg-emerald-500/5 border border-emerald-500/20 px-3 py-1 rounded text-emerald-500 font-bold hover:bg-emerald-500 hover:text-black transition-all">
-                    {tag}
-                  </button>
-                )) : <span className="text-[9px] italic text-zinc-800 tracking-widest uppercase">Waiting for signal...</span>}
-              </div>
-            </div>
           </div>
 
           <div className="p-6 bg-black border-t border-white/5 space-y-4">
@@ -387,41 +392,54 @@ export default function DashboardPage() {
           </div>
         </aside>
 
+        {/* MAIN TERMINAL AREA */}
         <main className="flex-1 flex flex-col relative bg-black">
           <div className="flex-1 overflow-y-auto p-4 lg:p-10 space-y-6 scrollbar-hide">
-            {messages.filter(m => m.content.toLowerCase().includes(filterQuery.toLowerCase())).map((msg) => (
-              <div 
-                key={msg.id} 
-                onClick={() => handleDoubleTap(msg.profile_id)}
-                className="group flex flex-col gap-1 max-w-[95%] active:scale-[0.98] transition-transform"
-              >
-                <div className="flex items-center gap-2">
-                  <span className={`text-[10px] font-black tracking-widest uppercase ${getTierColor(msg.profiles?.signal_score || 0, msg.is_founder_msg)}`}>
-                    {msg.profiles?.username || 'ANON'}
-                  </span>
-                  <span className="text-[8px] text-zinc-700 font-bold uppercase">{new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                </div>
-                <div className={`p-4 rounded-2xl rounded-tl-none text-sm leading-relaxed border ${msg.is_founder_msg ? 'bg-amber-500/5 border-amber-500/20 text-amber-100' : 'bg-white/[0.03] border-white/5 text-zinc-300'}`}>
-                  {msg.content.split(' ').map((word, i) => word.startsWith('#') ? <span key={i} className="text-emerald-500 font-black">{word} </span> : word + ' ')}
-                </div>
-                {profile.is_founder && <button onClick={(e) => { e.stopPropagation(); burnMessage(msg.id); }} className="text-[8px] text-red-500/40 hover:text-red-500 uppercase font-black self-start mt-1">Burn_Data</button>}
+            
+            {/* LEADERBOARD OVERLAY */}
+            {showLeaderboard ? (
+              <div className="max-w-4xl mx-auto w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <Leaderboard />
               </div>
-            ))}
+            ) : (
+              /* MESSAGE LIST */
+              messages.filter(m => m.content.toLowerCase().includes(filterQuery.toLowerCase())).map((msg) => (
+                <div 
+                  key={msg.id} 
+                  onClick={() => handleDoubleTap(msg.profile_id)}
+                  className="group flex flex-col gap-1 max-w-[95%] active:scale-[0.98] transition-transform"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[10px] font-black tracking-widest uppercase ${getTierColor(msg.profiles?.signal_score || 0, msg.is_founder_msg)}`}>
+                      {msg.profiles?.username || 'ANON'}
+                    </span>
+                    <span className="text-[8px] text-zinc-700 font-bold uppercase">{new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                  </div>
+                  <div className={`p-4 rounded-2xl rounded-tl-none text-sm leading-relaxed border ${msg.is_founder_msg ? 'bg-amber-500/5 border-amber-500/20 text-amber-100' : 'bg-white/[0.03] border-white/5 text-zinc-300'}`}>
+                    {msg.content.split(' ').map((word, i) => word.startsWith('#') ? <span key={i} className="text-emerald-500 font-black">{word} </span> : word + ' ')}
+                  </div>
+                  {profile.is_founder && <button onClick={(e) => { e.stopPropagation(); burnMessage(msg.id); }} className="text-[8px] text-red-500/40 hover:text-red-500 uppercase font-black self-start mt-1">Burn_Data</button>}
+                </div>
+              ))
+            )}
             <div ref={scrollRef} />
           </div>
 
-          <div className="p-4 lg:p-8 bg-gradient-to-t from-black via-black to-transparent">
-            {filterQuery && (
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-[9px] text-emerald-500 font-black uppercase">Filtering by: {filterQuery}</span>
-                <button onClick={() => setFilterQuery("")} className="text-[9px] text-zinc-600 underline uppercase">Clear</button>
-              </div>
-            )}
-            <form onSubmit={sendMessage} className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-1.5 focus-within:border-emerald-500/50 transition-all">
-               <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} disabled={isCooldown} placeholder={isCooldown ? "TX..." : "INPUT SIGNAL..."} className="flex-1 bg-transparent py-3 text-sm text-white outline-none placeholder:text-zinc-800 uppercase font-bold" />
-               <button type="submit" className="p-2.5 bg-emerald-500 rounded-xl text-black active:scale-90 transition-transform"><ChevronUp size={20} strokeWidth={3}/></button>
-            </form>
-          </div>
+          {/* INPUT AREA */}
+          {!showLeaderboard && (
+            <div className="p-4 lg:p-8 bg-gradient-to-t from-black via-black to-transparent">
+              {filterQuery && (
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-[9px] text-emerald-500 font-black uppercase">Filtering by: {filterQuery}</span>
+                  <button onClick={() => setFilterQuery("")} className="text-[9px] text-zinc-600 underline uppercase">Clear</button>
+                </div>
+              )}
+              <form onSubmit={sendMessage} className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-1.5 focus-within:border-emerald-500/50 transition-all">
+                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} disabled={isCooldown} placeholder={isCooldown ? "TX..." : "INPUT SIGNAL..."} className="flex-1 bg-transparent py-3 text-sm text-white outline-none placeholder:text-zinc-800 uppercase font-bold" />
+                  <button type="submit" className="p-2.5 bg-emerald-500 rounded-xl text-black active:scale-90 transition-transform"><ChevronUp size={20} strokeWidth={3}/></button>
+              </form>
+            </div>
+          )}
         </main>
       </div>
 
