@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
-  LayoutGrid, Lock, Globe, ChevronUp, Wallet, BarChart3, Activity, Hash, Zap, Radio, TrendingUp, X, DollarSign, TrendingDown 
+  LayoutGrid, Lock, Globe, ChevronUp, Wallet, BarChart3, Activity, Hash, Zap, Radio, TrendingUp, X, DollarSign 
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -25,7 +25,7 @@ export default function DashboardPage() {
   const theLobby = useMemo(() => districts.find(d => d.slug === 'lobby'), [districts]);
   const nicheSectors = useMemo(() => districts.filter(d => !d.parent_slug && d.slug !== 'lobby'), [districts]);
 
-  // Specific Sector Logic: FINANCE
+  // Sector-Specific Logic
   const isFinanceSector = activeDistrict?.slug === 'finance';
 
   const hasHashtag = useMemo(() => /#\w+/.test(newMessage), [newMessage]);
@@ -132,7 +132,7 @@ export default function DashboardPage() {
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
         <button onClick={() => setView('admin')} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 border border-emerald-500/20 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'hover:text-white'}`}>
           <LayoutGrid size={16} />
-          <span className="text-xs font-black uppercase tracking-widest">Dashboard</span>
+          <span className="text-xs font-black uppercase tracking-widest text-shadow-glow">Dashboard</span>
         </button>
         <div className="w-[1px] h-6 bg-white/10" />
         <div className="flex items-center gap-6">
@@ -188,7 +188,7 @@ export default function DashboardPage() {
             </div>
           </div>
         ) : (
-          /* --- DISTRICT INTERFACE --- */
+          /* --- CHAT INTERFACE --- */
           <div className={`h-full flex relative animate-in slide-in-from-bottom duration-500 ${isFinanceSector ? 'bg-[#050505]' : ''}`}>
             <div className="flex-1 flex flex-col border-r border-white/5 relative bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:40px_40px]">
               
@@ -225,15 +225,18 @@ export default function DashboardPage() {
                 <form onSubmit={transmitSignal} className="max-w-2xl mx-auto">
                   <div className={`relative flex items-center bg-white/5 border rounded-sm transition-all overflow-hidden ${isFinanceSector ? 'border-emerald-500/20 focus-within:border-emerald-500' : 'border-white/10 focus-within:border-emerald-500/50'}`}>
                     <div className="pl-4 text-zinc-700">{isFinanceSector ? <TrendingUp size={14} className="text-emerald-500" /> : <Zap size={14} />}</div>
-                    <input 
-                      value={newMessage} 
-                      onChange={(e) => setNewMessage(e.target.value)} 
-                      placeholder={isFinanceSector ? "EXECUTE_TRADE_SIGNAL..." : "TRANSMIT_SIGNAL..."} 
-                      className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase tracking-widest placeholder:text-zinc-800" 
-                    />
-                    <button type="submit" className={`px-8 border-l font-black text-xs uppercase transition-all ${isFinanceSector ? 'bg-emerald-600 text-black border-emerald-500 hover:bg-white' : 'bg-zinc-900 border-white/10 text-emerald-500 hover:bg-emerald-500 hover:text-black'}`}>
-                      {isFinanceSector ? 'Commit' : 'Broadcast'}
-                    </button>
+                    <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder={isFinanceSector ? "EXECUTE_TRADE_SIGNAL..." : "TRANSMIT_SIGNAL..."} className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase tracking-widest placeholder:text-zinc-800" />
+                    <button type="submit" className={`px-8 border-l font-black text-xs uppercase transition-all ${isFinanceSector ? 'bg-emerald-600 text-black border-emerald-500 hover:bg-white' : 'bg-zinc-900 border-white/10 text-emerald-500 hover:bg-emerald-500 hover:text-black'}`}>{isFinanceSector ? 'Commit' : 'Broadcast'}</button>
+                  </div>
+                  
+                  {/* --- RESTORED MINING INDICATORS --- */}
+                  <div className="flex justify-between mt-2">
+                    <p className={`text-[8px] uppercase font-black transition-all duration-300 ${currentReward === 5 ? 'text-emerald-400 animate-pulse' : 'text-zinc-700'}`}>
+                      {currentReward === 5 ? '>>> HIGH_VALUE_SIGNAL_DETECTED' : '>>> STANDARD_SIGNAL_PROTOCOL'}
+                    </p>
+                    <p className="text-[8px] text-zinc-500 uppercase font-bold">
+                      Potential_Yield: <span className={currentReward === 5 ? 'text-emerald-500' : 'text-zinc-400'}>{currentReward} SP</span>
+                    </p>
                   </div>
                 </form>
               </div>
@@ -241,7 +244,7 @@ export default function DashboardPage() {
 
             <aside className="w-80 bg-black p-6 flex flex-col gap-8">
               <div className="space-y-4">
-                <div className={`flex items-center gap-2 ${isFinanceSector ? 'text-emerald-500' : 'text-blue-500'}`}><Hash size={16} /><h3 className="text-[11px] font-black uppercase tracking-widest">Market_Tags</h3></div>
+                <div className={`flex items-center gap-2 ${isFinanceSector ? 'text-emerald-500' : 'text-blue-500'}`}><Hash size={16} /><h3 className="text-[11px] font-black uppercase tracking-widest">{isFinanceSector ? 'Market_Tags' : 'Trending_Signals'}</h3></div>
                 <div className="space-y-2 overflow-y-auto max-h-[60vh] scrollbar-hide">
                   {trendingTags.map(([tag, count]) => (
                     <button key={tag} onClick={() => setActiveHashtag(tag)} className={`w-full flex justify-between items-center p-3 rounded-sm border transition-all ${activeHashtag === tag ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-500' : 'bg-white/5 border-white/5 text-zinc-500 hover:border-white/20 hover:text-white'}`}>
@@ -251,16 +254,15 @@ export default function DashboardPage() {
                   ))}
                 </div>
               </div>
-              
-              {isFinanceSector && (
-                <div className="mt-auto p-4 border border-emerald-500/20 rounded bg-emerald-500/[0.02] space-y-3">
-                  <p className="text-[9px] font-black text-emerald-500 uppercase tracking-tighter flex items-center gap-2"><TrendingUp size={10} /> Market_Data_Stream</p>
-                  <div className="space-y-2 text-[8px] font-bold uppercase">
-                    <div className="flex justify-between text-zinc-500"><span>SIGNAL/USD</span><span className="text-emerald-400">+12.4%</span></div>
-                    <div className="flex justify-between text-zinc-500"><span>MINING_EXP</span><span className="text-blue-400">STABLE</span></div>
-                  </div>
+
+              {/* --- RESTORED PROTOCOL BOX --- */}
+              <div className={`mt-auto p-4 border rounded ${isFinanceSector ? 'border-emerald-500/20 bg-emerald-500/[0.02]' : 'border-blue-500/20 bg-blue-500/[0.02]'}`}>
+                <p className={`text-[9px] font-black uppercase mb-2 ${isFinanceSector ? 'text-emerald-400' : 'text-blue-400'}`}>{isFinanceSector ? 'Finance Protocol' : 'Mining Protocol'}</p>
+                <div className="space-y-1 text-[9px] uppercase font-bold">
+                  <div className="flex justify-between"><span className="text-zinc-500">Generic Chat</span><span className="text-zinc-300">3 SP</span></div>
+                  <div className="flex justify-between"><span className="text-emerald-500">Hashtag Tagged</span><span className="text-emerald-500">5 SP</span></div>
                 </div>
-              )}
+              </div>
             </aside>
           </div>
         )}
