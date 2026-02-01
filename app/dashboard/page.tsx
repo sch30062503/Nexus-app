@@ -22,6 +22,7 @@ export default function DashboardPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const channelRef = useRef<any>(null);
 
+  // --- DERIVED DATA ---
   const isFinanceSector = useMemo(() => activeDistrict?.slug === 'finance' || activeDistrict?.slug?.startsWith('finance-'), [activeDistrict]);
   const subTiers = useMemo(() => districts.filter(d => d.parent_slug === 'finance'), [districts]);
   const hasHighYieldTag = useMemo(() => /#\w+/.test(newMessage) || !!activeHashtag, [newMessage, activeHashtag]);
@@ -42,6 +43,7 @@ export default function DashboardPage() {
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
   }, [messages]);
 
+  // --- CORE LOGIC ---
   const loadNexus = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return router.replace("/");
@@ -83,11 +85,11 @@ export default function DashboardPage() {
     if (!error) loadNexus();
   };
 
+  // --- ADMIN TESTING TOOLS ---
   const triggerManualHarvest = async () => {
     if (!confirm("Confirm Weekly Harvest? 10% of 10k+ pots will move to Vault.")) return;
     const { error } = await supabase.rpc('weekly_nexus_harvest');
     if (error) {
-      console.error("Harvest Error:", error);
       alert("Harvest failed: " + error.message);
     } else {
       loadNexus();
@@ -108,6 +110,7 @@ export default function DashboardPage() {
 
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
+      {/* NAV */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
         <button onClick={() => setView('admin')} className={`flex items-center justify-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 bg-emerald-500/5' : 'hover:text-white'}`}>
           <LayoutGrid size={16} /> <span className="text-xs font-black uppercase">Dashboard</span>
@@ -170,25 +173,23 @@ export default function DashboardPage() {
               </div>
             </div>
 
+            {/* TEST SUITE */}
             <div className="mt-20 border border-red-500/10 bg-red-500/5 p-8">
-              <div className="flex items-center gap-3 mb-6 text-red-500">
-                <ShieldAlert size={20} />
-                <h3 className="text-xs font-black uppercase tracking-[0.3em]">Internal_Testing_Suite</h3>
+              <div className="flex items-center gap-3 mb-6 text-red-500 font-black uppercase text-[10px]">
+                <ShieldAlert size={16} /> Internal_Admin_Tools
               </div>
               <div className="flex gap-4">
-                <button onClick={() => injectTestSignal(2500)} className="flex items-center gap-2 bg-white/5 border border-white/10 px-4 py-3 text-[10px] font-black hover:bg-white/10 transition-all uppercase">
-                  <Plus size={14} /> Add 2.5k Signal
+                <button onClick={() => injectTestSignal(10000)} className="bg-white/5 border border-white/10 px-6 py-3 text-[10px] font-black uppercase hover:bg-white/10 transition-all">
+                  Set Pot to 10k
                 </button>
-                <button onClick={() => injectTestSignal(10000)} className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-4 py-3 text-[10px] font-black text-emerald-500 hover:bg-emerald-500/20 transition-all uppercase">
-                  <Plus size={14} /> Jump to 10k Milestone
-                </button>
-                <button onClick={triggerManualHarvest} className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 px-4 py-3 text-[10px] font-black text-red-400 hover:bg-red-500/20 transition-all uppercase ml-auto">
-                  <RefreshCcw size={14} /> Force Weekly Harvest
+                <button onClick={triggerManualHarvest} className="bg-red-500/10 border border-red-500/20 px-6 py-3 text-[10px] font-black text-red-400 uppercase hover:bg-red-500/20 transition-all ml-auto">
+                  <RefreshCcw size={14} className="inline mr-2" /> Force Global Harvest
                 </button>
               </div>
             </div>
           </div>
         ) : (
+          /* CHAT VIEW */
           <div className="h-full flex relative">
             {isFinanceSector && (
               <aside className="w-52 border-r border-white/5 bg-black flex flex-col p-4 gap-4">
