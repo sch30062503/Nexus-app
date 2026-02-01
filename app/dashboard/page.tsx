@@ -30,7 +30,9 @@ export default function DashboardPage() {
     const counts: Record<string, number> = {};
     messages.forEach(m => {
       const tags = m.content.match(/#\w+/g);
-      if (tags) tags.forEach((t: string) => counts[t] = (counts[t] || 0) + 1);
+      if (tags) tags.forEach((t: string) => {
+        counts[t] = (counts[t] || 0) + 1;
+      });
     });
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
   }, [messages]);
@@ -55,7 +57,7 @@ export default function DashboardPage() {
     setLoading(false);
   };
 
-  // --- LOBBY/CHAT LOGIC ---
+  // --- CHAT LOGIC ---
   const enterRoom = async (district: any) => {
     setView('chat');
     setActiveDistrict(district);
@@ -70,7 +72,12 @@ export default function DashboardPage() {
     if (data) setMessages(data);
 
     const channel = supabase.channel(`room:${district.slug}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `district_slug=eq.${district.slug}` }, 
+      .on('postgres_changes', { 
+        event: 'INSERT', 
+        schema: 'public', 
+        table: 'messages', 
+        filter: `district_slug=eq.${district.slug}` 
+      }, 
       async (payload) => {
         const { data: userProfile } = await supabase.from("profiles").select("username, signal_score").eq("id", payload.new.user_id).single();
         const newMessageObj = { ...payload.new, profiles: userProfile };
@@ -81,20 +88,26 @@ export default function DashboardPage() {
     return () => { supabase.removeChannel(channel); };
   };
 
+  // --- WEIGHTED MINING LOGIC ---
   const transmitSignal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !profile || !activeDistrict) return;
 
-    // Auto-append active hashtag if set
     let finalContent = newMessage;
+    // Auto-append active hashtag if user clicked one from the sidebar
     if (activeHashtag && !finalContent.includes(activeHashtag)) {
       finalContent = `${finalContent} ${activeHashtag}`;
     }
 
-    const { error } = await supabase.rpc('submit_signal', {
+    // Weight Calculation: 5 SP for tags, 3 SP for generic chatter
+    const hasHashtag = /#\w+/.test(finalContent);
+    const rewardWeight = hasHashtag ? 5 : 3;
+
+    const { error } = await supabase.rpc('submit_weighted_signal', {
       user_id: profile.id,
       signal_content: finalContent,
-      target_hub: activeDistrict.slug
+      target_hub: activeDistrict.slug,
+      points_to_add: rewardWeight
     });
 
     if (!error) {
@@ -116,7 +129,7 @@ export default function DashboardPage() {
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
       
-      {/* NAVIGATION (LOCKED DASHBOARD BTN) */}
+      {/* NAVIGATION (DASHBOARD LOCKED) */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
         <button 
           onClick={() => setView('admin')}
@@ -203,10 +216,8 @@ export default function DashboardPage() {
           /* --- THE LOBBY (CENTERED CHAT + HASHTAG SIDEBAR) --- */
           <div className="h-full flex relative animate-in slide-in-from-bottom duration-500">
             
-            {/* CENTERED CHAT CONTAINER */}
-            <div className="flex-1 flex flex-col border-r border-white/5 relative">
+            <div className="flex-1 flex flex-col border-r border-white/5 relative bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:40px_40px]">
               
-              {/* FILTER STATUS HUD */}
               <div className="px-8 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <Radio className="text-blue-400 animate-pulse" size={14} />
@@ -221,7 +232,6 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              {/* MESSAGES (CENTERED CONTENT) */}
               <div className="flex-1 overflow-y-auto scrollbar-hide">
                 <div className="max-w-2xl mx-auto p-8 space-y-8">
                   {filteredMessages.map((m) => (
@@ -230,7 +240,7 @@ export default function DashboardPage() {
                         <span className="text-[10px] font-black text-white/50 uppercase">{m.profiles?.username || 'ANON_UNIT'}</span>
                         <span className="text-[8px] font-bold text-emerald-500/20 tabular-nums">[{m.profiles?.signal_score}]</span>
                       </div>
-                      <div className="bg-white/[0.02] border-l border-white/10 p-4 rounded-r-md">
+                      <div className="bg-white/[0.02] border-l border-white/10 p-4 rounded-r-sm">
                         <p className="text-[15px] text-zinc-300 leading-relaxed font-medium">
                           {m.content}
                         </p>
@@ -241,7 +251,6 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* INPUT BAR */}
               <div className="p-8 border-t border-white/5 bg-black">
                 <form onSubmit={transmitSignal} className="max-w-2xl mx-auto">
                   <div className="relative flex items-center bg-white/5 border border-white/10 rounded-sm focus-within:border-emerald-500/50 transition-all overflow-hidden">
@@ -254,15 +263,20 @@ export default function DashboardPage() {
                       placeholder={activeHashtag ? `Broadcasting in ${activeHashtag}...` : "TRANSMIT_SIGNAL..."}
                       className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase tracking-widest placeholder:text-zinc-800"
                     />
-                    <button type="submit" className="px-8 bg-zinc-900 border-l border-white/10 text-emerald-500 font-black text-xs uppercase hover:bg-emerald-500 transition-all">
+                    <button type="submit" className="px-8 bg-zinc-900 border-l border-white/10 text-emerald-500 font-black text-xs uppercase hover:bg-emerald-500 hover:text-black transition-all">
                       Broadcast
                     </button>
                   </div>
-                  {activeHashtag && (
-                    <p className="mt-2 text-[8px] text-emerald-500 uppercase font-black animate-pulse">
-                      Auto-Tag Active: {activeHashtag}
+                  <div className="flex justify-between mt-2">
+                    <p className={`text-[8px] uppercase font-black ${/#\w+/.test(newMessage) || activeHashtag ? 'text-emerald-500 animate-pulse' : 'text-zinc-600'}`}>
+                      {/#\w+/.test(newMessage) || activeHashtag ? 'High-Value Signal: 5 SP' : 'Standard Signal: 3 SP'}
                     </p>
-                  )}
+                    {activeHashtag && (
+                      <p className="text-[8px] text-blue-400 uppercase font-black">
+                        Auto-Tagging: {activeHashtag}
+                      </p>
+                    )}
+                  </div>
                 </form>
               </div>
             </div>
@@ -274,8 +288,8 @@ export default function DashboardPage() {
                   <TrendingUp size={16} />
                   <h3 className="text-[11px] font-black uppercase tracking-widest">Trending_Signals</h3>
                 </div>
-                <div className="space-y-2">
-                  {trendingTags.length === 0 && <p className="text-[9px] text-zinc-800 uppercase">Scanning for tags...</p>}
+                <div className="space-y-2 overflow-y-auto max-h-[60vh] scrollbar-hide">
+                  {trendingTags.length === 0 && <p className="text-[9px] text-zinc-800 uppercase italic">Awaiting tagged frequency...</p>}
                   {trendingTags.map(([tag, count]) => (
                     <button 
                       key={tag}
@@ -290,9 +304,11 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="mt-auto p-4 border border-emerald-500/10 rounded bg-emerald-500/[0.02]">
-                <p className="text-[9px] font-black text-emerald-500 uppercase mb-2">Mining Tip</p>
-                <p className="text-[10px] text-zinc-500 leading-tight">Using trending hashtags increases signal reach and earns bonus SP.</p>
+              <div className="mt-auto p-4 border border-blue-500/20 rounded bg-blue-500/[0.02]">
+                <p className="text-[9px] font-black text-blue-400 uppercase mb-2">Mining Protocol</p>
+                <p className="text-[10px] text-zinc-500 leading-tight">
+                  Signals containing hashtags are rewarded at <span className="text-white">5 SP</span>. Generic chatter is rewarded at <span className="text-white">3 SP</span>.
+                </p>
               </div>
             </aside>
 
