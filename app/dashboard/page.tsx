@@ -3,9 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { ChevronUp, Lock, Hash, Zap, Radio } from "lucide-react";
+import { ChevronUp, Lock, Hash, Zap, Radio, LayoutGrid, ShieldCheck, TrendingUp } from "lucide-react";
 
-// --- CONTRACTS ---
 interface District { slug: string; name: string; min_score: number; parent_slug?: string; }
 interface Profile { id: string; username: string | null; signal_score: number; }
 interface Message { id: string; content: string; profiles?: { username: string | null, signal_score: number } }
@@ -20,18 +19,19 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // --- CLEANER LOGIC ---
-  const sectors = useMemo(() => districts.filter(d => !d.parent_slug), [districts]);
-  const subRooms = useMemo(() => 
-    districts.filter(d => d.parent_slug === (activeDistrict?.parent_slug || activeDistrict?.slug))
-  , [districts, activeDistrict]);
-
-  const score = profile?.signal_score || 0;
+  // Logic for the Top Bar vs Sidebar
+  const lobby = useMemo(() => districts.find(d => d.slug === 'lobby'), [districts]);
+  const niches = useMemo(() => districts.filter(d => !d.parent_slug && d.slug !== 'lobby'), [districts]);
+  
+  // The Sidebar only populates if we are in a niche or a sub-room of a niche
+  const currentNiche = useMemo(() => {
+    if (!activeDistrict || activeDistrict.slug === 'lobby') return null;
+    return districts.find(d => d.slug === (activeDistrict.parent_slug || activeDistrict.slug));
+  }, [activeDistrict, districts]);
 
   const loadData = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return router.replace("/");
-
     const { data: pData } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
     const { data: dData } = await supabase.from("districts").select("*").order('min_score', { ascending: true });
     
@@ -60,96 +60,117 @@ export default function DashboardPage() {
   useEffect(() => { loadData(); }, []);
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center font-mono text-white text-[10px] tracking-[0.5em] animate-pulse">LOADING_NEXUS</div>;
+  if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center font-mono text-white text-[10px] animate-pulse uppercase tracking-[0.4em]">Establishing_Connection</div>;
 
   return (
-    <div className="h-[100dvh] flex flex-col bg-black text-zinc-500 font-mono overflow-hidden selection:bg-emerald-500 selection:text-black">
+    <div className="h-[100dvh] flex flex-col bg-[#050505] text-zinc-400 font-mono overflow-hidden">
       
-      {/* 1. MINIMAL HUD */}
-      <header className="p-6 flex justify-between items-end border-b border-white/[0.03]">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full shadow-[0_0_10px_#10b981]" />
-            <span className="text-white text-xs font-black uppercase tracking-widest">Signal_System</span>
-          </div>
-          <div className="text-[9px] font-bold uppercase tracking-tighter opacity-40">
-            {activeDistrict?.parent_slug ? `${activeDistrict.parent_slug} / ${activeDistrict.name}` : activeDistrict?.name}
-          </div>
-        </div>
-        <div className="text-right">
-          <span className="text-[9px] uppercase font-black opacity-30 block">Power_Level</span>
-          <span className="text-white text-lg font-black tracking-tighter tabular-nums">{score.toLocaleString()}</span>
-        </div>
-      </header>
+      {/* --- TOP NAVIGATION BAR --- */}
+      <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
+        {/* TOP LEFT: LOBBY */}
+        <button 
+          onClick={() => { setActiveDistrict(lobby!); fetchChat('lobby'); }}
+          className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${activeDistrict?.slug === 'lobby' ? 'text-emerald-500 border border-emerald-500/20 bg-emerald-500/5' : 'hover:text-white'}`}
+        >
+          <LayoutGrid size={16} />
+          <span className="text-xs font-black uppercase tracking-widest">Lobby</span>
+        </button>
 
-      {/* 2. GHOST NAVIGATION */}
-      <nav className="px-6 py-4 flex gap-8 overflow-x-auto no-scrollbar border-b border-white/[0.03] bg-[#030303]">
-        {sectors.map(s => {
-          const isLocked = score < s.min_score;
-          const isActive = activeDistrict?.slug === s.slug || activeDistrict?.parent_slug === s.slug;
-          return (
-            <button 
-              key={s.slug}
-              disabled={isLocked}
-              onClick={() => { setActiveDistrict(s); fetchChat(s.slug); }}
-              className={`group flex flex-col items-start gap-1 transition-all ${isLocked ? 'opacity-10' : 'opacity-100'}`}
-            >
-              <span className={`text-[10px] font-black uppercase tracking-widest ${isActive ? 'text-emerald-500' : 'text-zinc-500 group-hover:text-white'}`}>
-                {s.name}
-              </span>
-              <div className={`h-[1px] w-full transition-all ${isActive ? 'bg-emerald-500' : 'bg-transparent'}`} />
-            </button>
-          );
-        })}
+        <div className="w-[1px] h-6 bg-white/10" />
+
+        {/* TOP CENTER: NICHES */}
+        <div className="flex items-center gap-6 overflow-x-auto no-scrollbar">
+          {niches.map(n => {
+            const isLocked = profile.signal_score < n.min_score;
+            const isActive = activeDistrict?.slug === n.slug || activeDistrict?.parent_slug === n.slug;
+            return (
+              <button 
+                key={n.slug}
+                disabled={isLocked}
+                onClick={() => { setActiveDistrict(n); fetchChat(n.slug); }}
+                className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-tighter transition-all 
+                  ${isActive ? 'text-white' : isLocked ? 'text-zinc-800' : 'text-zinc-600 hover:text-zinc-400'}`}
+              >
+                {isLocked && <Lock size={10} />}
+                {n.name}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* TOP RIGHT: GLOBAL SCORE */}
+        <div className="ml-auto text-right">
+          <span className="text-[8px] font-black uppercase text-zinc-700 block">Total_Signal</span>
+          <span className="text-emerald-500 text-sm font-black tracking-tighter tabular-nums">{profile.signal_score.toLocaleString()}</span>
+        </div>
       </nav>
 
-      {/* 3. CHAT FEED (Zen Mode) */}
-      <main className="flex-1 flex flex-col overflow-hidden relative">
-        <div className="flex-1 overflow-y-auto p-6 lg:p-12 space-y-10 scrollbar-hide">
-          {messages.map((m) => (
-            <div key={m.id} className="max-w-3xl mx-auto w-full group">
-              <div className="flex items-baseline gap-3 mb-2">
-                <span className="text-[10px] font-black text-white uppercase">{m.profiles?.username || 'ANON'}</span>
-                <span className="text-[8px] font-bold text-zinc-800 tabular-nums">[{m.profiles?.signal_score}]</span>
+      <div className="flex-1 flex overflow-hidden">
+        
+        {/* --- CONTEXTUAL SIDEBAR (Only shows for Niches) --- */}
+        {currentNiche && (
+          <aside className="w-64 border-r border-white/5 bg-black p-6 flex flex-col gap-8 animate-in slide-in-from-left duration-300">
+            <div>
+              <h2 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-4">{currentNiche.name}_Sector</h2>
+              <div className="space-y-4">
+                <div className="p-3 bg-white/5 border border-white/5 rounded">
+                  <span className="text-[8px] text-zinc-500 uppercase block mb-1">Local Rank</span>
+                  <span className="text-white text-xs font-black">STRIKER [Tier 1]</span>
+                </div>
+                <div className="p-3 bg-white/5 border border-white/5 rounded">
+                  <span className="text-[8px] text-zinc-500 uppercase block mb-1">Niche Points</span>
+                  <span className="text-emerald-500 text-xs font-black">4,209 SP</span>
+                </div>
               </div>
-              <p className="text-[15px] text-zinc-400 leading-relaxed tracking-tight group-hover:text-zinc-200 transition-colors">
-                {m.content}
-              </p>
             </div>
-          ))}
-          <div ref={scrollRef} />
-        </div>
 
-        {/* 4. SUB-LEVEL TIERS (Floating Tooltip style) */}
-        {activeDistrict?.slug !== 'lobby' && subRooms.length > 0 && (
-          <div className="absolute bottom-28 left-1/2 -translate-x-1/2 flex gap-4 px-6 py-2 bg-zinc-900/80 backdrop-blur-md rounded-full border border-white/5">
-            {subRooms.map(r => (
-              <button
-                key={r.slug}
-                onClick={() => { setActiveDistrict(r); fetchChat(r.slug); }}
-                className={`text-[9px] font-black uppercase ${activeDistrict?.slug === r.slug ? 'text-emerald-500' : 'text-zinc-500'}`}
-              >
-                {r.name}
-              </button>
-            ))}
-          </div>
+            <div className="flex-1">
+              <span className="text-[8px] font-black text-zinc-700 uppercase block mb-4">Internal_Nodes</span>
+              <div className="flex flex-col gap-2">
+                {districts.filter(d => d.parent_slug === currentNiche.slug).map(sub => (
+                  <button 
+                    key={sub.slug}
+                    onClick={() => { setActiveDistrict(sub); fetchChat(sub.slug); }}
+                    className={`text-left text-[10px] p-2 rounded transition-all ${activeDistrict?.slug === sub.slug ? 'bg-white/10 text-white font-bold' : 'text-zinc-600 hover:text-zinc-400'}`}
+                  >
+                    # {sub.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </aside>
         )}
 
-        {/* 5. MINIMAL INPUT */}
-        <div className="p-8 bg-black">
-          <form onSubmit={transmit} className="max-w-3xl mx-auto flex items-center border-b border-white/10 focus-within:border-emerald-500 transition-all">
-            <input 
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              placeholder="TYPE_SIGNAL..."
-              className="flex-1 bg-transparent py-4 text-sm text-white outline-none font-bold placeholder:text-zinc-900 uppercase tracking-widest"
-            />
-            <button type="submit" className="text-zinc-800 hover:text-emerald-500 transition-colors">
-              <ChevronUp size={20} />
-            </button>
-          </form>
-        </div>
-      </main>
+        {/* --- MAIN TERMINAL --- */}
+        <main className="flex-1 flex flex-col bg-[#020202]">
+          <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-hide">
+            {messages.map((m) => (
+              <div key={m.id} className="max-w-3xl flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black text-white/40 uppercase">{m.profiles?.username || 'ANON'}</span>
+                  <span className="text-[8px] font-bold text-emerald-500/20 tracking-tighter">{m.profiles?.signal_score}</span>
+                </div>
+                <p className="text-[14px] text-zinc-400 leading-relaxed font-medium">{m.content}</p>
+              </div>
+            ))}
+            <div ref={scrollRef} />
+          </div>
+
+          <div className="p-6 border-t border-white/5">
+            <form onSubmit={transmit} className="max-w-3xl flex items-center bg-white/5 border border-white/10 px-4 rounded focus-within:border-emerald-500/50 transition-all">
+              <input 
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder={`SEND SIGNAL TO ${activeDistrict?.name?.toUpperCase()}...`}
+                className="flex-1 bg-transparent py-4 text-xs text-white outline-none font-bold placeholder:text-zinc-800 uppercase tracking-widest"
+              />
+              <button type="submit" className="text-zinc-700 hover:text-emerald-500 transition-colors">
+                <ChevronUp size={20} />
+              </button>
+            </form>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
