@@ -22,7 +22,6 @@ export default function DashboardPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const channelRef = useRef<any>(null);
 
-  // --- DERIVED DATA ---
   const isFinanceSector = useMemo(() => activeDistrict?.slug === 'finance' || activeDistrict?.slug?.startsWith('finance-'), [activeDistrict]);
   const subTiers = useMemo(() => districts.filter(d => d.parent_slug === 'finance'), [districts]);
   const hasHighYieldTag = useMemo(() => /#\w+/.test(newMessage) || !!activeHashtag, [newMessage, activeHashtag]);
@@ -43,7 +42,6 @@ export default function DashboardPage() {
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
   }, [messages]);
 
-  // --- CORE LOGIC ---
   const loadNexus = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return router.replace("/");
@@ -82,17 +80,18 @@ export default function DashboardPage() {
       target_hub: activeDistrict.slug,
       points_to_add: currentReward
     });
-    if (!error) {
-      const { data: up } = await supabase.from("profiles").select("*").eq("id", profile.id).single();
-      if (up) setProfile(up);
-    }
+    if (!error) loadNexus();
   };
 
-  // --- ADMIN TESTING TOOLS ---
   const triggerManualHarvest = async () => {
-    if (!confirm("Reset all Weekly Pots and move 10% of 10k+ earners to Vault?")) return;
-    await supabase.rpc('weekly_nexus_harvest');
-    loadNexus();
+    if (!confirm("Confirm Weekly Harvest? 10% of 10k+ pots will move to Vault.")) return;
+    const { error } = await supabase.rpc('weekly_nexus_harvest');
+    if (error) {
+      console.error("Harvest Error:", error);
+      alert("Harvest failed: " + error.message);
+    } else {
+      loadNexus();
+    }
   };
 
   const injectTestSignal = async (amount: number) => {
@@ -109,7 +108,6 @@ export default function DashboardPage() {
 
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
-      {/* NAV (Centered Text Restored) */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
         <button onClick={() => setView('admin')} className={`flex items-center justify-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 bg-emerald-500/5' : 'hover:text-white'}`}>
           <LayoutGrid size={16} /> <span className="text-xs font-black uppercase">Dashboard</span>
@@ -172,7 +170,6 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* TESTING SUITE */}
             <div className="mt-20 border border-red-500/10 bg-red-500/5 p-8">
               <div className="flex items-center gap-3 mb-6 text-red-500">
                 <ShieldAlert size={20} />
@@ -189,11 +186,9 @@ export default function DashboardPage() {
                   <RefreshCcw size={14} /> Force Weekly Harvest
                 </button>
               </div>
-              <p className="text-[8px] text-zinc-600 mt-4 uppercase font-bold tracking-widest italic">Note: These tools bypass validation for rapid testing of the 10% dividend gate logic.</p>
             </div>
           </div>
         ) : (
-          /* CHAT INTERFACE (Buttons Centered) */
           <div className="h-full flex relative">
             {isFinanceSector && (
               <aside className="w-52 border-r border-white/5 bg-black flex flex-col p-4 gap-4">
