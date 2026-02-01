@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon } from "lucide-react";
+import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, Timer } from "lucide-react";
 import Leaderboard from "@/components/Leaderboard";
 
 type District = { slug: string; name: string; min_score: number; description: string; last_activity?: string };
@@ -39,22 +39,17 @@ export default function DashboardPage() {
   const [showSpawner, setShowSpawner] = useState(false);
   const [newDist, setNewDist] = useState({ name: '', slug: '', min: 0, desc: '' });
   
-  // USERNAME STATES
   const [newUsername, setNewUsername] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [timeLeft, setTimeLeft] = useState("");
   const [copied, setCopied] = useState(false);
 
-  // MEGAPHONE MODAL STATES
   const [showMegaModal, setShowMegaModal] = useState(false);
   const [megaBid, setMegaBid] = useState(0);
   const [megaMsg, setMegaMsg] = useState("");
 
-  const touchStart = useRef<number | null>(null);
-  const touchEnd = useRef<number | null>(null);
   const lastTap = useRef<number>(0);
-  
   const [megaphone, setMegaphone] = useState<Megaphone>({ msg: "WAITING FOR SIGNAL...", bid: 0, owner: "SYSTEM", decayedPrice: 0 });
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -63,66 +58,69 @@ export default function DashboardPage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // --- IDENTITY TUNER LOGIC (FIXED 1000 COST) ---
+  // --- NEW: FEVER MODE REALTIME SYNC ---
+  useEffect(() => {
+    const fetchFeverState = async () => {
+      const { data } = await supabase.from('system_settings').select('value').eq('key', 'fever_mode').single();
+      if (data) setFeverMode(data.value.active);
+    };
+    fetchFeverState();
+
+    const channel = supabase.channel('global_fever')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'system_settings', filter: 'key=eq.fever_mode' }, 
+      (payload) => {
+        const active = payload.new.value.active;
+        setFeverMode(active);
+        triggerToast(active ? "GLOBAL_FEVER_ACTIVE" : "FEVER_COOLDOWN");
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  // --- NEW: FOUNDER FEVER TOGGLE ---
+  const toggleFever = async () => {
+    if (!profile?.is_founder) return triggerToast("ACCESS_DENIED");
+    const nextState = !feverMode;
+    const { error } = await supabase.from('system_settings').update({ value: { active: nextState } }).eq('key', 'fever_mode');
+    if (error) triggerToast("DATABASE_ERROR");
+  };
+
+  // --- EXISTING LOGIC: IDENTITY TUNER ---
   const updateIdentity = async () => {
     const CHANGE_COST = 1000;
-
     if (!newUsername || newUsername.length < 3) return triggerToast("ID_TOO_SHORT");
     if (newUsername.length > 15) return triggerToast("ID_TOO_LONG");
-    
-    if ((profile?.signal_score || 0) < CHANGE_COST) {
-      return triggerToast("INSUFFICIENT_SIGNAL");
-    }
-
+    if ((profile?.signal_score || 0) < CHANGE_COST) return triggerToast("INSUFFICIENT_SIGNAL");
     const { data: success, error } = await supabase.rpc('update_username_with_cost', {
       user_id: profile?.id,
       new_username: newUsername.toUpperCase(),
       change_cost: CHANGE_COST
     });
-    
     if (success && !error) { 
-        triggerToast(`IDENTITY_REWRITTEN_-_${CHANGE_COST}_PTS`); 
-        setProfile(prev => prev ? { 
-          ...prev, 
-          username: newUsername.toUpperCase(),
-          signal_score: (prev.signal_score || 0) - CHANGE_COST
-        } : null); 
+        triggerToast(`IDENTITY_REWRITTEN`); 
+        setProfile(prev => prev ? { ...prev, username: newUsername.toUpperCase(), signal_score: (prev.signal_score || 0) - CHANGE_COST } : null); 
         setNewUsername(""); 
-    } else {
-        triggerToast("ID_TAKEN_OR_ERROR");
-    }
+    } else { triggerToast("ID_TAKEN_OR_ERROR"); }
   };
 
-  // --- MEGAPHONE TAKEOVER LOGIC ---
+  // --- EXISTING LOGIC: MEGAPHONE ---
   const handleTakeover = async () => {
-    if (!profile || megaBid <= (megaphone.decayedPrice || 0)) {
-      return triggerToast("BID_MUST_EXCEED_DECAY");
-    }
-
-    const { data, error } = await supabase.rpc('takeover_megaphone', {
+    if (!profile || megaBid <= (megaphone.decayedPrice || 0)) return triggerToast("BID_MUST_EXCEED_DECAY");
+    const { error } = await supabase.rpc('takeover_megaphone', {
       user_id: profile.id,
       new_message: megaMsg.toUpperCase(),
       bid_amount: megaBid
     });
-
-    if (error) {
-      triggerToast(error.message);
-    } else {
-      triggerToast("SIGNAL_BROADCASTED_GLOBALLY");
-      setShowMegaModal(false);
-      setMegaMsg("");
-      setMegaBid(0);
-      loadNexus(); 
-    }
+    if (error) { triggerToast(error.message); } 
+    else { triggerToast("SIGNAL_BROADCASTED"); setShowMegaModal(false); setMegaMsg(""); setMegaBid(0); loadNexus(); }
   };
 
+  // --- EXISTING LOGIC: REFERRALS & TIMER ---
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const ref = params.get('ref');
-    if (ref) {
-      localStorage.setItem('nexus_referral', ref);
-      window.history.replaceState({}, '', window.location.pathname);
-    }
+    if (ref) { localStorage.setItem('nexus_referral', ref); window.history.replaceState({}, '', window.location.pathname); }
   }, []);
 
   const syncReferralWithDB = async (userId: string) => {
@@ -160,23 +158,17 @@ export default function DashboardPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // --- CORE DATA LOADING ---
   const loadNexus = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return router.replace("/");
     const { data: pData } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
     if (pData) { setProfile(pData as Profile); syncReferralWithDB(session.user.id); }
-    
     const { data: dData } = await supabase.from("districts").select("*").order('min_score', { ascending: true });
     if (dData) { setDistricts(dData); const target = activeDistrict || dData[0]; setActiveDistrict(target); fetchDistrictMessages(target.slug); }
-    
     const { data: megaData } = await supabase.rpc('get_decayed_bid');
     if (megaData && megaData[0]) {
-      setMegaphone({ 
-        msg: megaData[0].current_message, 
-        bid: megaData[0].bid_amount, 
-        owner: megaData[0].owner_username,
-        decayedPrice: megaData[0].decayed_price 
-      });
+      setMegaphone({ msg: megaData[0].current_message, bid: megaData[0].bid_amount, owner: megaData[0].owner_username, decayedPrice: megaData[0].decayed_price });
     }
     setLoading(false);
   };
@@ -225,6 +217,8 @@ export default function DashboardPage() {
     if (!newMessage.trim() || !profile || isCooldown || !activeDistrict) return;
     setIsCooldown(true);
     await supabase.from("messages").insert({ content: newMessage, profile_id: profile.id, district_slug: activeDistrict.slug, is_founder_msg: profile.is_founder });
+    
+    // Fever Mode check for points
     if (!profile.is_founder) {
       const points = feverMode ? 10 : 5;
       await supabase.rpc('increment_signal_with_dividend', { user_id: profile.id, amount: points });
@@ -236,7 +230,21 @@ export default function DashboardPage() {
   if (loading || !profile) return <div className="h-screen flex items-center justify-center bg-black font-mono text-emerald-500 text-xs uppercase tracking-widest">Syncing_Nexus...</div>;
 
   return (
-    <div className={`h-[100dvh] flex flex-col font-mono bg-black text-zinc-400 overflow-hidden`}>
+    <div className={`h-[100dvh] flex flex-col font-mono bg-black text-zinc-400 overflow-hidden ${feverMode ? 'ring-inset ring-4 ring-orange-500/10' : ''}`}>
+      
+      {/* 🏁 GLOBAL HUD (Restored with Fever) */}
+      <div className={`${feverMode ? 'bg-orange-500 animate-pulse' : 'bg-emerald-500'} text-black py-1 px-4 flex justify-between items-center z-[100] transition-colors duration-500`}>
+        <div className="flex items-center gap-4 overflow-hidden">
+          <span className="text-[10px] font-black uppercase flex items-center gap-1 shrink-0">
+            {feverMode ? <Zap size={12} fill="black"/> : <Radio size={12}/>} 
+            {feverMode ? "FEVER_ACTIVE_-_2X_BOOST" : `BROADCAST: ${megaphone.msg}`}
+          </span>
+        </div>
+        <div className="flex items-center gap-4 bg-black/10 px-2 py-0.5 rounded text-[10px] font-black shrink-0 ml-4">
+           <Timer size={12}/> {timeLeft}
+        </div>
+      </div>
+
       {/* HEADER */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-black/80 z-[70]">
         <div className="flex items-center gap-4">
@@ -261,28 +269,36 @@ export default function DashboardPage() {
 
           <div className="p-6 flex-1 overflow-y-auto space-y-8 scrollbar-hide">
             
-            {/* 🛠️ IDENTITY TUNER */}
+            {/* ⚡ FOUNDER OVERRIDE: FEVER TRIGGER */}
+            {profile?.is_founder && (
+              <div className="p-4 border border-orange-500/50 bg-orange-500/5 rounded-xl space-y-3">
+                <p className="text-[10px] text-orange-500 font-black uppercase tracking-widest flex items-center gap-2">
+                  <ShieldAlert size={12}/> System_Override
+                </p>
+                <button 
+                  onClick={toggleFever} 
+                  className={`w-full py-2 text-[9px] font-black uppercase rounded transition-all ${feverMode ? 'bg-orange-500 text-black' : 'bg-zinc-900 text-orange-500 border border-orange-500/30'}`}
+                >
+                  {feverMode ? "Kill_Fever" : "Trigger_Fever"}
+                </button>
+              </div>
+            )}
+
+            {/* IDENTITY TUNER */}
             <div className="space-y-3 p-4 border border-white/10 bg-white/5 rounded-xl">
               <div className="flex items-center justify-between">
                 <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest flex items-center gap-2">
                   <Settings size={10} /> Identity_Tuner
                 </p>
-                <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">
-                  1000_SIGNAL
-                </span>
+                <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">1000_SIGNAL</span>
               </div>
               <div className="flex gap-2">
-                <input 
-                  value={newUsername} 
-                  onChange={(e) => setNewUsername(e.target.value.toUpperCase())}
-                  placeholder={profile.username || "SET_ID..."}
-                  className="flex-1 bg-black border border-white/10 p-2 text-[10px] text-white outline-none focus:border-emerald-500 rounded"
-                />
-                <button onClick={updateIdentity} className="bg-emerald-500 text-black px-3 py-2 text-[9px] font-black rounded uppercase hover:bg-emerald-400">Sync</button>
+                <input value={newUsername} onChange={(e) => setNewUsername(e.target.value.toUpperCase())} placeholder={profile.username || "SET_ID..."} className="flex-1 bg-black border border-white/10 p-2 text-[10px] text-white outline-none focus:border-emerald-500 rounded" />
+                <button onClick={updateIdentity} className="bg-emerald-500 text-black px-3 py-2 text-[9px] font-black rounded uppercase">Sync</button>
               </div>
             </div>
 
-            {/* 📢 MEGAPHONE DISPLAY */}
+            {/* MEGAPHONE DISPLAY */}
             <div className="p-4 border border-emerald-500/30 bg-emerald-500/5 rounded-xl">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
@@ -302,12 +318,7 @@ export default function DashboardPage() {
                 </div>
                 <span className="text-[8px] text-zinc-700 font-black uppercase">BY: {megaphone.owner}</span>
               </div>
-              <button 
-                onClick={() => setShowMegaModal(true)}
-                className="w-full py-2 bg-emerald-500/10 border border-emerald-500/40 text-emerald-500 text-[9px] font-black uppercase rounded hover:bg-emerald-500 hover:text-black transition-all"
-              >
-                Initiate_Takeover
-              </button>
+              <button onClick={() => setShowMegaModal(true)} className="w-full py-2 bg-emerald-500/10 border border-emerald-500/40 text-emerald-500 text-[9px] font-black uppercase rounded hover:bg-emerald-500 hover:text-black">Initiate_Takeover</button>
             </div>
 
             {/* DIVIDEND TRACKER */}
@@ -319,7 +330,7 @@ export default function DashboardPage() {
                 <p className="text-xl font-black text-white">+{profile.dividend_earned?.toLocaleString() || 0}</p>
             </div>
 
-            {/* 🛰️ TRENDING HASHTAGS */}
+            {/* TRENDING HASHTAGS */}
             <div className="space-y-4">
               <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest flex items-center gap-2">
                 <Hash size={10} /> Trending_Signal
@@ -404,40 +415,16 @@ export default function DashboardPage() {
               </h2>
               <button onClick={() => setShowMegaModal(false)} className="text-zinc-500 hover:text-white"><X size={20}/></button>
             </div>
-
             <div className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-[9px] text-zinc-500 uppercase font-black">Broadcast_Message</label>
-                <input 
-                  value={megaMsg} 
-                  onChange={(e) => setMegaMsg(e.target.value)}
-                  placeholder="ENTER_TRANSMISSION..."
-                  className="w-full bg-black border border-white/10 p-3 text-sm text-white outline-none focus:border-emerald-500 rounded-lg"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[9px] text-zinc-500 uppercase font-black">Bid_Amount (MIN: {megaphone.decayedPrice + 1})</label>
-                <input 
-                  type="number"
-                  value={megaBid} 
-                  onChange={(e) => setMegaBid(parseInt(e.target.value) || 0)}
-                  className="w-full bg-black border border-white/10 p-3 text-sm text-emerald-500 font-black outline-none focus:border-emerald-500 rounded-lg"
-                />
-              </div>
+              <input value={megaMsg} onChange={(e) => setMegaMsg(e.target.value)} placeholder="ENTER_TRANSMISSION..." className="w-full bg-black border border-white/10 p-3 text-sm text-white outline-none focus:border-emerald-500 rounded-lg" />
+              <input type="number" value={megaBid} onChange={(e) => setMegaBid(parseInt(e.target.value) || 0)} className="w-full bg-black border border-white/10 p-3 text-sm text-emerald-500 font-black outline-none focus:border-emerald-500 rounded-lg" />
             </div>
-
-            <button 
-              onClick={handleTakeover}
-              className="w-full bg-emerald-500 text-black py-4 rounded-xl font-black uppercase hover:bg-emerald-400 transition-all shadow-[0_0_20px_rgba(16,185,129,0.2)]"
-            >
-              Execute_Broadcast
-            </button>
+            <button onClick={handleTakeover} className="w-full bg-emerald-500 text-black py-4 rounded-xl font-black uppercase hover:bg-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.2)]">Execute_Broadcast</button>
           </div>
         </div>
       )}
 
-      {toast && <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] bg-emerald-500 text-black px-4 py-2 rounded text-[10px] font-black uppercase shadow-[0_0_30px_rgba(16,185,129,0.5)]">{toast}</div>}
+      {toast && <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[120] bg-emerald-500 text-black px-4 py-2 rounded text-[10px] font-black uppercase shadow-[0_0_30px_rgba(16,185,129,0.5)]">{toast}</div>}
     </div>
   );
 }
