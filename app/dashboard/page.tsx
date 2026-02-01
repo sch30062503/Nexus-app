@@ -1,9 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, Timer } from "lucide-react";
+import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, Timer, Activity, Flame } from "lucide-react";
 import Leaderboard from "@/components/Leaderboard";
 
 type District = { slug: string; name: string; min_score: number; description: string; last_activity?: string };
@@ -29,15 +29,15 @@ export default function DashboardPage() {
   const [activeDistrict, setActiveDistrict] = useState<District | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
-  const [filterQuery, setFilterQuery] = useState(""); 
   const [loading, setLoading] = useState(true);
-  const [onlineCount, setOnlineCount] = useState(1);
   const [isCooldown, setIsCooldown] = useState(false);
   const [feverMode, setFeverMode] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [trendingTags, setTrendingTags] = useState<string[]>([]);
-  const [showSpawner, setShowSpawner] = useState(false);
-  const [newDist, setNewDist] = useState({ name: '', slug: '', min: 0, desc: '' });
+  
+  // --- NEW: FREQUENCY & FILTER STATES ---
+  const [activeFrequency, setActiveFrequency] = useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = useState(""); 
   
   const [newUsername, setNewUsername] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -58,53 +58,68 @@ export default function DashboardPage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // --- NEW: FEVER MODE REALTIME SYNC ---
+  // --- NEW: LOGIC - FREQUENCY POPULATION & HEATMAP ---
+  const frequencyMap = useMemo(() => {
+    const counts: Record<string, number> = {};
+    messages.forEach(m => {
+      const tags = m.content.match(/#\w+/g);
+      if (tags) tags.forEach(tag => {
+        const t = tag.toUpperCase();
+        counts[t] = (counts[t] || 0) + 1;
+      });
+    });
+    return counts;
+  }, [messages]);
+
+  // --- NEW: LOGIC - FILTERED MESSAGES (Combines Frequency Tuning + Search) ---
+  const filteredMessages = useMemo(() => {
+    return messages.filter(m => {
+      const content = m.content.toUpperCase();
+      const matchesSearch = content.includes(filterQuery.toUpperCase());
+      const matchesFrequency = activeFrequency ? content.includes(`#${activeFrequency.toUpperCase()}`) : true;
+      return matchesSearch && matchesFrequency;
+    });
+  }, [messages, filterQuery, activeFrequency]);
+
+  // --- FEVER MODE REALTIME SYNC ---
   useEffect(() => {
     const fetchFeverState = async () => {
       const { data } = await supabase.from('system_settings').select('value').eq('key', 'fever_mode').single();
       if (data) setFeverMode(data.value.active);
     };
     fetchFeverState();
-
     const channel = supabase.channel('global_fever')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'system_settings', filter: 'key=eq.fever_mode' }, 
       (payload) => {
-        const active = payload.new.value.active;
-        setFeverMode(active);
-        triggerToast(active ? "GLOBAL_FEVER_ACTIVE" : "FEVER_COOLDOWN");
-      })
-      .subscribe();
-
+        setFeverMode(payload.new.value.active);
+        triggerToast(payload.new.value.active ? "GLOBAL_FEVER_ACTIVE" : "FEVER_COOLDOWN");
+      }).subscribe();
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // --- NEW: FOUNDER FEVER TOGGLE ---
   const toggleFever = async () => {
     if (!profile?.is_founder) return triggerToast("ACCESS_DENIED");
-    const nextState = !feverMode;
-    const { error } = await supabase.from('system_settings').update({ value: { active: nextState } }).eq('key', 'fever_mode');
-    if (error) triggerToast("DATABASE_ERROR");
+    await supabase.from('system_settings').update({ value: { active: !feverMode } }).eq('key', 'fever_mode');
   };
 
-  // --- EXISTING LOGIC: IDENTITY TUNER ---
+  // --- IDENTITY TUNER ---
   const updateIdentity = async () => {
     const CHANGE_COST = 1000;
     if (!newUsername || newUsername.length < 3) return triggerToast("ID_TOO_SHORT");
-    if (newUsername.length > 15) return triggerToast("ID_TOO_LONG");
     if ((profile?.signal_score || 0) < CHANGE_COST) return triggerToast("INSUFFICIENT_SIGNAL");
-    const { data: success, error } = await supabase.rpc('update_username_with_cost', {
+    const { data: success } = await supabase.rpc('update_username_with_cost', {
       user_id: profile?.id,
       new_username: newUsername.toUpperCase(),
       change_cost: CHANGE_COST
     });
-    if (success && !error) { 
+    if (success) { 
         triggerToast(`IDENTITY_REWRITTEN`); 
         setProfile(prev => prev ? { ...prev, username: newUsername.toUpperCase(), signal_score: (prev.signal_score || 0) - CHANGE_COST } : null); 
         setNewUsername(""); 
-    } else { triggerToast("ID_TAKEN_OR_ERROR"); }
+    }
   };
 
-  // --- EXISTING LOGIC: MEGAPHONE ---
+  // --- MEGAPHONE ---
   const handleTakeover = async () => {
     if (!profile || megaBid <= (megaphone.decayedPrice || 0)) return triggerToast("BID_MUST_EXCEED_DECAY");
     const { error } = await supabase.rpc('takeover_megaphone', {
@@ -112,89 +127,55 @@ export default function DashboardPage() {
       new_message: megaMsg.toUpperCase(),
       bid_amount: megaBid
     });
-    if (error) { triggerToast(error.message); } 
-    else { triggerToast("SIGNAL_BROADCASTED"); setShowMegaModal(false); setMegaMsg(""); setMegaBid(0); loadNexus(); }
+    if (!error) { triggerToast("SIGNAL_BROADCASTED"); setShowMegaModal(false); loadNexus(); }
   };
 
-  // --- EXISTING LOGIC: REFERRALS & TIMER ---
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const ref = params.get('ref');
-    if (ref) { localStorage.setItem('nexus_referral', ref); window.history.replaceState({}, '', window.location.pathname); }
-  }, []);
+  // --- MESSAGING WITH AUTO-FREQUENCY ---
+  const sendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !profile || isCooldown || !activeDistrict) return;
 
-  const syncReferralWithDB = async (userId: string) => {
-    const pendingRef = localStorage.getItem('nexus_referral');
-    if (pendingRef) {
-      const { data: recruiter } = await supabase.from('profiles').select('id').eq('referral_code', pendingRef).single();
-      if (recruiter && recruiter.id !== userId) {
-        const { error } = await supabase.from('profiles').update({ referred_by: recruiter.id }).eq('id', userId).is('referred_by', null);
-        if (!error) { localStorage.removeItem('nexus_referral'); triggerToast("REFERRAL_ESTABLISHED"); }
-      }
+    let content = newMessage;
+    // Auto-tag with frequency if user is tuned in
+    if (activeFrequency && !content.toUpperCase().includes(`#${activeFrequency}`)) {
+      content = `${newMessage} #${activeFrequency}`;
     }
+
+    setIsCooldown(true);
+    await supabase.from("messages").insert({ content, profile_id: profile.id, district_slug: activeDistrict.slug, is_founder_msg: profile.is_founder });
+    
+    if (!profile.is_founder) {
+      const points = feverMode ? 10 : 5;
+      await supabase.rpc('increment_signal_with_dividend', { user_id: profile.id, amount: points });
+    }
+    setNewMessage("");
+    setTimeout(() => setIsCooldown(false), 800);
   };
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const now = new Date();
-      const nextMonday = new Date();
-      nextMonday.setDate(now.getDate() + (1 + 7 - now.getDay()) % 7);
-      nextMonday.setHours(0, 0, 0, 0);
-      const diff = nextMonday.getTime() - now.getTime();
-      const hours = Math.floor(diff / (1000 * 60 * 60));
-      const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const secs = Math.floor((diff % (1000 * 60)) / 1000);
-      setTimeLeft(`${hours}H : ${mins}M : ${secs}S`);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const copyReferral = () => {
-    if (!profile?.referral_code) return;
-    const link = `${window.location.origin}/signup?ref=${profile.referral_code}`;
-    navigator.clipboard.writeText(link);
-    setCopied(true);
-    triggerToast("LINK_COPIED");
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  // --- CORE DATA LOADING ---
+  // --- CORE LOADING ---
   const loadNexus = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return router.replace("/");
     const { data: pData } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
-    if (pData) { setProfile(pData as Profile); syncReferralWithDB(session.user.id); }
+    if (pData) setProfile(pData as Profile);
     const { data: dData } = await supabase.from("districts").select("*").order('min_score', { ascending: true });
-    if (dData) { setDistricts(dData); const target = activeDistrict || dData[0]; setActiveDistrict(target); fetchDistrictMessages(target.slug); }
+    if (dData) { setDistricts(dData); const target = activeDistrict || dData[0]; setActiveDistrict(target); fetchMsgs(target.slug); }
     const { data: megaData } = await supabase.rpc('get_decayed_bid');
-    if (megaData && megaData[0]) {
-      setMegaphone({ msg: megaData[0].current_message, bid: megaData[0].bid_amount, owner: megaData[0].owner_username, decayedPrice: megaData[0].decayed_price });
-    }
+    if (megaData?.[0]) setMegaphone({ msg: megaData[0].current_message, bid: megaData[0].bid_amount, owner: megaData[0].owner_username, decayedPrice: megaData[0].decayed_price });
     setLoading(false);
   };
 
-  const fetchDistrictMessages = async (slug: string) => {
+  const fetchMsgs = async (slug: string) => {
     const { data } = await supabase.from("messages").select("*, profiles(username, signal_score)").eq("district_slug", slug).order("created_at", { ascending: true }).limit(100);
-    if (data) { setMessages(data as any); extractTrendingTags(data as any); }
-  };
-
-  const extractTrendingTags = (msgs: Message[]) => {
-    const counts: Record<string, number> = {};
-    msgs.forEach(m => {
-      const tags = m.content.match(/#\w+/g);
-      if (tags) tags.forEach((tag: string) => { counts[tag.toLowerCase()] = (counts[tag.toLowerCase()] || 0) + 1; });
-    });
-    setTrendingTags(Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 6));
-  };
-
-  const handleDoubleTap = async (targetUserId: string) => {
-    const now = Date.now();
-    if (now - lastTap.current < 300) {
-      if (targetUserId === profile?.id) return triggerToast("CANNOT_BOOST_SELF");
-      await supabase.rpc('increment_signal_with_dividend', { user_id: targetUserId, amount: 1 });
-      triggerToast("SIGNAL_BOOSTED");
+    if (data) {
+      setMessages(data as any);
+      const counts: Record<string, number> = {};
+      data.forEach((m: any) => {
+        const tags = m.content.match(/#\w+/g);
+        if (tags) tags.forEach((t: string) => counts[t.toLowerCase()] = (counts[t.toLowerCase()] || 0) + 1);
+      });
+      setTrendingTags(Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 6));
     }
-    lastTap.current = now;
   };
 
   useEffect(() => { loadNexus(); }, []);
@@ -210,158 +191,110 @@ export default function DashboardPage() {
     return () => { supabase.removeChannel(channel); };
   }, [activeDistrict, profile]);
 
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [filteredMessages]);
 
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMessage.trim() || !profile || isCooldown || !activeDistrict) return;
-    setIsCooldown(true);
-    await supabase.from("messages").insert({ content: newMessage, profile_id: profile.id, district_slug: activeDistrict.slug, is_founder_msg: profile.is_founder });
-    
-    // Fever Mode check for points
-    if (!profile.is_founder) {
-      const points = feverMode ? 10 : 5;
-      await supabase.rpc('increment_signal_with_dividend', { user_id: profile.id, amount: points });
-    }
-    setNewMessage("");
-    setTimeout(() => setIsCooldown(false), 800);
+  const copyReferral = () => {
+    const link = `${window.location.origin}/signup?ref=${profile?.referral_code}`;
+    navigator.clipboard.writeText(link);
+    setCopied(true);
+    triggerToast("LINK_COPIED");
+    setTimeout(() => setCopied(false), 2000);
   };
 
-  if (loading || !profile) return <div className="h-screen flex items-center justify-center bg-black font-mono text-emerald-500 text-xs uppercase tracking-widest">Syncing_Nexus...</div>;
+  if (loading || !profile) return <div className="h-screen flex items-center justify-center bg-black font-mono text-emerald-500 text-xs uppercase">Syncing_Nexus...</div>;
 
   return (
     <div className={`h-[100dvh] flex flex-col font-mono bg-black text-zinc-400 overflow-hidden ${feverMode ? 'ring-inset ring-4 ring-orange-500/10' : ''}`}>
       
-      {/* 🏁 GLOBAL HUD (Restored with Fever) */}
-      <div className={`${feverMode ? 'bg-orange-500 animate-pulse' : 'bg-emerald-500'} text-black py-1 px-4 flex justify-between items-center z-[100] transition-colors duration-500`}>
-        <div className="flex items-center gap-4 overflow-hidden">
-          <span className="text-[10px] font-black uppercase flex items-center gap-1 shrink-0">
-            {feverMode ? <Zap size={12} fill="black"/> : <Radio size={12}/>} 
-            {feverMode ? "FEVER_ACTIVE_-_2X_BOOST" : `BROADCAST: ${megaphone.msg}`}
-          </span>
-        </div>
-        <div className="flex items-center gap-4 bg-black/10 px-2 py-0.5 rounded text-[10px] font-black shrink-0 ml-4">
+      {/* 🏁 HUD */}
+      <div className={`${feverMode ? 'bg-orange-500 animate-pulse' : 'bg-emerald-500'} text-black py-1 px-4 flex justify-between items-center z-[100]`}>
+        <span className="text-[10px] font-black uppercase flex items-center gap-1">
+          {feverMode ? <Zap size={12} fill="black"/> : <Radio size={12}/>} 
+          {feverMode ? "FEVER_ACTIVE_-_2X_BOOST" : `BROADCAST: ${megaphone.msg}`}
+        </span>
+        <div className="flex items-center gap-4 bg-black/10 px-2 py-0.5 rounded text-[10px] font-black">
            <Timer size={12}/> {timeLeft}
         </div>
-      </div>
-
-      {/* HEADER */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-black/80 z-[70]">
-        <div className="flex items-center gap-4">
-          <button onClick={() => setIsSidebarOpen(true)} className="p-1 text-emerald-500 lg:hidden"><Menu size={24} /></button>
-          <div className="flex flex-col">
-            <span className="text-[9px] text-zinc-600 font-black uppercase tracking-tighter">Nexus_Terminal</span>
-            <span className="text-xs text-white font-black uppercase tracking-widest">{activeDistrict?.name}</span>
-          </div>
-        </div>
-        <button onClick={() => setShowLeaderboard(!showLeaderboard)} className={`px-3 py-1 rounded text-[9px] font-black uppercase border transition-all flex items-center gap-2 ${showLeaderboard ? 'bg-emerald-500 text-black border-emerald-500' : 'text-emerald-500 border-emerald-500/30'}`}>
-          <Trophy size={10} /> {showLeaderboard ? "Close_Rank" : "Rankings"}
-        </button>
       </div>
 
       <div className="flex-1 flex overflow-hidden">
         {/* SIDEBAR */}
         <aside className={`fixed inset-0 z-[80] lg:relative lg:translate-x-0 w-full sm:w-80 bg-black border-r border-white/5 flex flex-col transition-transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
           <div className="flex items-center justify-between p-6 border-b border-white/5">
-              <span className="text-xs font-black text-emerald-500 uppercase">Control_Center</span>
+              <span className="text-xs font-black text-emerald-500 uppercase tracking-widest">Control_Center</span>
               <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden text-zinc-500"><X size={20}/></button>
           </div>
 
           <div className="p-6 flex-1 overflow-y-auto space-y-8 scrollbar-hide">
             
-            {/* ⚡ FOUNDER OVERRIDE: FEVER TRIGGER */}
+            {/* ⚡ FOUNDER TRIGGER */}
             {profile?.is_founder && (
               <div className="p-4 border border-orange-500/50 bg-orange-500/5 rounded-xl space-y-3">
-                <p className="text-[10px] text-orange-500 font-black uppercase tracking-widest flex items-center gap-2">
-                  <ShieldAlert size={12}/> System_Override
-                </p>
-                <button 
-                  onClick={toggleFever} 
-                  className={`w-full py-2 text-[9px] font-black uppercase rounded transition-all ${feverMode ? 'bg-orange-500 text-black' : 'bg-zinc-900 text-orange-500 border border-orange-500/30'}`}
-                >
+                <p className="text-[10px] text-orange-500 font-black uppercase flex items-center gap-2"><ShieldAlert size={12}/> System_Override</p>
+                <button onClick={toggleFever} className={`w-full py-2 text-[9px] font-black uppercase rounded transition-all ${feverMode ? 'bg-orange-500 text-black' : 'bg-zinc-900 text-orange-500 border border-orange-500/30'}`}>
                   {feverMode ? "Kill_Fever" : "Trigger_Fever"}
                 </button>
               </div>
             )}
 
-            {/* IDENTITY TUNER */}
-            <div className="space-y-3 p-4 border border-white/10 bg-white/5 rounded-xl">
+            {/* 📡 FREQUENCY TUNER (DYNAMIC FILTER) */}
+            <div className="p-4 border border-blue-500/30 bg-blue-500/5 rounded-xl space-y-3">
               <div className="flex items-center justify-between">
-                <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest flex items-center gap-2">
-                  <Settings size={10} /> Identity_Tuner
-                </p>
-                <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">1000_SIGNAL</span>
+                <p className="text-[10px] text-blue-400 font-black uppercase flex items-center gap-2"><Target size={12} /> Frequency_Tuner</p>
+                {activeFrequency && <button onClick={() => setActiveFrequency(null)} className="text-[8px] text-zinc-500 underline uppercase">Reset</button>}
               </div>
-              <div className="flex gap-2">
-                <input value={newUsername} onChange={(e) => setNewUsername(e.target.value.toUpperCase())} placeholder={profile.username || "SET_ID..."} className="flex-1 bg-black border border-white/10 p-2 text-[10px] text-white outline-none focus:border-emerald-500 rounded" />
-                <button onClick={updateIdentity} className="bg-emerald-500 text-black px-3 py-2 text-[9px] font-black rounded uppercase">Sync</button>
+              <div className="relative">
+                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-blue-500 text-[10px] font-bold">#</span>
+                <input 
+                  value={activeFrequency || ""} 
+                  onChange={(e) => setActiveFrequency(e.target.value.replace('#', '').toUpperCase())} 
+                  placeholder="ALL_SIGNALS..." 
+                  className="w-full bg-black border border-blue-500/20 p-2 pl-5 text-[10px] text-blue-400 outline-none focus:border-blue-500 rounded font-bold" 
+                />
               </div>
             </div>
 
-            {/* MEGAPHONE DISPLAY */}
-            <div className="p-4 border border-emerald-500/30 bg-emerald-500/5 rounded-xl">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <Radio size={10} className="text-emerald-500 animate-pulse" />
-                  <h3 className="text-[10px] text-emerald-500 uppercase tracking-widest">Global_Signal</h3>
-                </div>
-                <div className="flex items-center gap-1">
-                   <Clock size={8} className="text-zinc-600"/>
-                   <span className="text-[8px] text-zinc-600 uppercase font-black">Decay_Active</span>
-                </div>
-              </div>
-              <p className="text-[11px] text-white font-bold italic mb-2">"{megaphone.msg}"</p>
-              <div className="flex justify-between items-end border-t border-white/5 pt-2 mb-3">
-                <div className="flex flex-col">
-                  <span className="text-[7px] text-zinc-600 uppercase">Min_Bid</span>
-                  <span className="text-xs font-black text-emerald-400">{megaphone.decayedPrice || 10}</span>
-                </div>
-                <span className="text-[8px] text-zinc-700 font-black uppercase">BY: {megaphone.owner}</span>
-              </div>
-              <button onClick={() => setShowMegaModal(true)} className="w-full py-2 bg-emerald-500/10 border border-emerald-500/40 text-emerald-500 text-[9px] font-black uppercase rounded hover:bg-emerald-500 hover:text-black">Initiate_Takeover</button>
-            </div>
-
-            {/* DIVIDEND TRACKER */}
-            <div className="p-4 border border-cyan-500/30 bg-cyan-500/5 rounded-xl">
-                <div className="flex items-center gap-2 mb-1">
-                    <Users size={10} className="text-cyan-500" />
-                    <h3 className="text-[10px] text-cyan-500/60 uppercase tracking-widest">Network_Dividends</h3>
-                </div>
-                <p className="text-xl font-black text-white">+{profile.dividend_earned?.toLocaleString() || 0}</p>
-            </div>
-
-            {/* TRENDING HASHTAGS */}
+            {/* 🔥 SIGNAL HEATMAP */}
             <div className="space-y-4">
-              <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest flex items-center gap-2">
-                <Hash size={10} /> Trending_Signal
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {trendingTags.length > 0 ? trendingTags.map(tag => (
-                  <button key={tag} onClick={() => {setFilterQuery(tag); setIsSidebarOpen(false);}} className={`text-[9px] border px-2 py-1 rounded font-bold transition-colors ${filterQuery === tag ? 'bg-emerald-500 border-emerald-500 text-black' : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-500 hover:bg-emerald-500/20'}`}>
-                    {tag}
+              <p className="text-[10px] text-zinc-600 font-black uppercase flex items-center gap-2"><Activity size={10} /> Signal_Heatmap</p>
+              <div className="grid grid-cols-1 gap-1">
+                {Object.entries(frequencyMap).sort((a,b) => b[1] - a[1]).slice(0, 5).map(([tag, count]) => (
+                  <button key={tag} onClick={() => { setActiveFrequency(tag.replace('#','')); setIsSidebarOpen(false); }} className="flex items-center justify-between p-2 rounded bg-white/[0.02] border border-white/5 hover:border-blue-500/30 group transition-all">
+                    <span className="text-[9px] font-bold text-zinc-400 group-hover:text-blue-400">{tag}</span>
+                    <div className="flex items-center gap-2">
+                      {count > 5 && <Flame size={10} className="text-orange-500 animate-pulse" />}
+                      <span className="text-[8px] font-black px-1.5 py-0.5 bg-zinc-900 rounded text-emerald-500">{count} Signals</span>
+                    </div>
                   </button>
-                )) : <span className="text-[8px] text-zinc-800 uppercase">Awaiting_Trends...</span>}
+                ))}
               </div>
             </div>
 
-            {/* RECRUITMENT LINK */}
-            <div className="space-y-3 p-4 border border-white/5 bg-white/5 rounded-xl">
-              <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest flex items-center gap-2">
-                <Share2 size={10}/> Recruitment
-              </p>
-              <button onClick={copyReferral} className={`w-full p-3 text-[10px] font-black uppercase border transition-all rounded-lg flex items-center justify-center gap-2 ${copied ? 'bg-emerald-500 border-emerald-500 text-black' : 'bg-zinc-900 border-white/10 text-white'}`}>
-                {copied ? "LINK_COPIED" : `ID: ${profile.referral_code?.toUpperCase() || '...'}`}
-              </button>
+            {/* IDENTITY TUNER */}
+            <div className="p-4 border border-white/10 bg-white/5 rounded-xl space-y-3">
+              <p className="text-[10px] text-zinc-600 font-black uppercase flex items-center gap-2"><Settings size={10} /> Identity_Tuner</p>
+              <div className="flex gap-2">
+                <input value={newUsername} onChange={(e) => setNewUsername(e.target.value.toUpperCase())} placeholder={profile.username || "ID..."} className="flex-1 bg-black border border-white/10 p-2 text-[10px] text-white outline-none rounded" />
+                <button onClick={updateIdentity} className="bg-emerald-500 text-black px-3 py-1 text-[9px] font-black rounded uppercase">Sync</button>
+              </div>
             </div>
 
             {/* ZONES */}
             <div className="space-y-2">
-                <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Active_Zones</p>
+                <p className="text-[10px] font-black text-zinc-600 uppercase">Active_Zones</p>
                 {districts.map((d) => (
-                    <button key={d.slug} onClick={() => { setActiveDistrict(d); fetchDistrictMessages(d.slug); setIsSidebarOpen(false); }} className={`w-full flex items-center justify-between p-3 rounded border text-[10px] font-black uppercase ${activeDistrict?.slug === d.slug ? 'bg-emerald-500/10 border-emerald-500/40 text-white' : 'border-transparent text-zinc-500'}`}>
-                      {d.name} <span className="text-[8px] opacity-30">{d.min_score}</span>
+                    <button key={d.slug} onClick={() => { setActiveDistrict(d); fetchMsgs(d.slug); setIsSidebarOpen(false); }} className={`w-full flex items-center justify-between p-3 rounded border text-[10px] font-black uppercase ${activeDistrict?.slug === d.slug ? 'bg-emerald-500/10 border-emerald-500/40 text-white' : 'border-transparent text-zinc-500'}`}>
+                      {d.name} <span className="opacity-30">{d.min_score}</span>
                     </button>
                 ))}
+            </div>
+
+            {/* RECRUITMENT */}
+            <div className="p-4 border border-white/5 bg-white/5 rounded-xl space-y-3">
+              <p className="text-[10px] text-zinc-600 font-black uppercase flex items-center gap-2"><Share2 size={10}/> Recruitment</p>
+              <button onClick={copyReferral} className={`w-full p-3 text-[10px] font-black uppercase border transition-all rounded-lg flex items-center justify-center gap-2 ${copied ? 'bg-emerald-500 text-black' : 'bg-zinc-900 text-white'}`}>
+                {copied ? "LINK_COPIED" : `ID: ${profile.referral_code?.toUpperCase() || '...'}`}
+              </button>
             </div>
           </div>
         </aside>
@@ -371,60 +304,65 @@ export default function DashboardPage() {
           <div className="flex-1 overflow-y-auto p-4 lg:p-10 space-y-6 scrollbar-hide">
             {showLeaderboard ? <Leaderboard /> : (
               <>
-                {filterQuery && (
-                  <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/30 p-2 rounded-lg mb-4">
-                    <span className="text-[10px] text-emerald-500 font-black uppercase tracking-widest">FILTER_ACTIVE: {filterQuery}</span>
-                    <button onClick={() => setFilterQuery("")} className="text-[9px] text-white font-black underline uppercase">Clear</button>
+                {/* ACTIVE FILTER OVERLAY */}
+                {(activeFrequency || filterQuery) && (
+                  <div className="flex items-center justify-between bg-blue-500/10 border border-blue-500/30 p-2 rounded-lg mb-4">
+                    <span className="text-[10px] text-blue-500 font-black uppercase flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+                      LOCKED: {activeFrequency ? `#${activeFrequency}` : 'SEARCH_MODE'}
+                    </span>
+                    <button onClick={() => {setActiveFrequency(null); setFilterQuery("");}} className="text-[9px] text-white font-black underline">RESET</button>
                   </div>
                 )}
                 
-                {messages.filter(m => m.content.toLowerCase().includes(filterQuery.toLowerCase())).map((msg) => (
-                  <div key={msg.id} onClick={() => handleDoubleTap(msg.profile_id)} className="flex flex-col gap-1 max-w-[95%] cursor-pointer active:scale-[0.99] transition-transform">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-black text-zinc-500 uppercase">{msg.profiles?.username || 'ANON'}</span>
-                      <span className="text-[8px] text-zinc-800 uppercase">{new Date(msg.created_at).toLocaleTimeString()}</span>
+                {filteredMessages.map((msg) => {
+                  // Check if this specific message contains a "Hot" hashtag
+                  const hasHotTag = msg.content.match(/#\w+/g)?.some(tag => frequencyMap[tag.toUpperCase()] > 5);
+                  return (
+                    <div key={msg.id} onClick={() => handleDoubleTap(msg.profile_id)} className={`flex flex-col gap-1 max-w-[95%] cursor-pointer group transition-all`}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black text-zinc-500 uppercase group-hover:text-emerald-500">{msg.profiles?.username || 'ANON'}</span>
+                        <span className="text-[8px] text-zinc-800 uppercase">{new Date(msg.created_at).toLocaleTimeString()}</span>
+                        {msg.is_founder_msg && <span className="text-[8px] bg-emerald-500 text-black px-1 font-black">FOUNDER</span>}
+                      </div>
+                      <div className={`p-4 rounded-xl border transition-all ${hasHotTag ? 'border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.2)] bg-blue-500/5' : 'border-white/5 bg-white/[0.02]'}`}>
+                        <p className={`text-sm ${hasHotTag ? 'text-blue-100 font-medium' : 'text-zinc-300'}`}>{msg.content}</p>
+                      </div>
                     </div>
-                    <div className={`p-4 rounded-xl border bg-white/[0.02] border-white/5 text-sm text-zinc-300`}>
-                      {msg.content}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
+                <div ref={scrollRef} />
               </>
             )}
-            <div ref={scrollRef} />
           </div>
 
           {!showLeaderboard && (
             <div className="p-4 lg:p-8 bg-black">
-              <form onSubmit={sendMessage} className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-1 focus-within:border-emerald-500/50">
-                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="INPUT_SIGNAL..." className="flex-1 bg-transparent py-4 text-sm text-white outline-none uppercase font-bold" />
-                  <button type="submit" className="p-2 bg-emerald-500 rounded-lg text-black"><ChevronUp size={20}/></button>
+              <form onSubmit={sendMessage} className={`flex items-center gap-2 bg-white/5 border rounded-2xl px-4 py-1 transition-all ${activeFrequency ? 'border-blue-500' : 'border-white/10'}`}>
+                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder={activeFrequency ? `REPLYING_TO_#${activeFrequency}...` : "INPUT_SIGNAL..."} className="flex-1 bg-transparent py-4 text-sm text-white outline-none uppercase font-bold" />
+                  <button type="submit" className={`p-2 rounded-lg text-black ${activeFrequency ? 'bg-blue-500' : 'bg-emerald-500'}`}><ChevronUp size={20}/></button>
               </form>
             </div>
           )}
         </main>
       </div>
 
-      {/* TAKEOVER MODAL */}
+      {/* MEGAPHONE MODAL */}
       {showMegaModal && (
-        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4">
           <div className="w-full max-w-md border border-emerald-500/30 bg-zinc-950 p-6 rounded-2xl space-y-6">
-            <div className="flex justify-between items-center border-b border-white/5 pb-4">
-              <h2 className="text-emerald-500 font-black uppercase tracking-widest flex items-center gap-2">
-                <MegaphoneIcon size={16}/> Global_Takeover
-              </h2>
-              <button onClick={() => setShowMegaModal(false)} className="text-zinc-500 hover:text-white"><X size={20}/></button>
-            </div>
+            <h2 className="text-emerald-500 font-black uppercase flex items-center gap-2"><MegaphoneIcon size={16}/> Global_Takeover</h2>
             <div className="space-y-4">
-              <input value={megaMsg} onChange={(e) => setMegaMsg(e.target.value)} placeholder="ENTER_TRANSMISSION..." className="w-full bg-black border border-white/10 p-3 text-sm text-white outline-none focus:border-emerald-500 rounded-lg" />
-              <input type="number" value={megaBid} onChange={(e) => setMegaBid(parseInt(e.target.value) || 0)} className="w-full bg-black border border-white/10 p-3 text-sm text-emerald-500 font-black outline-none focus:border-emerald-500 rounded-lg" />
+              <input value={megaMsg} onChange={(e) => setMegaMsg(e.target.value)} placeholder="ENTER_TRANSMISSION..." className="w-full bg-black border border-white/10 p-3 text-sm text-white outline-none rounded-lg" />
+              <input type="number" value={megaBid} onChange={(e) => setMegaBid(parseInt(e.target.value) || 0)} className="w-full bg-black border border-white/10 p-3 text-sm text-emerald-500 font-black outline-none rounded-lg" />
             </div>
-            <button onClick={handleTakeover} className="w-full bg-emerald-500 text-black py-4 rounded-xl font-black uppercase hover:bg-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.2)]">Execute_Broadcast</button>
+            <button onClick={handleTakeover} className="w-full bg-emerald-500 text-black py-4 rounded-xl font-black uppercase">Execute_Broadcast</button>
+            <button onClick={() => setShowMegaModal(false)} className="w-full text-[10px] text-zinc-600 uppercase font-black">Abort_Mission</button>
           </div>
         </div>
       )}
 
-      {toast && <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[120] bg-emerald-500 text-black px-4 py-2 rounded text-[10px] font-black uppercase shadow-[0_0_30px_rgba(16,185,129,0.5)]">{toast}</div>}
+      {toast && <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[120] bg-emerald-500 text-black px-4 py-2 rounded text-[10px] font-black uppercase shadow-xl">{toast}</div>}
     </div>
   );
 }
