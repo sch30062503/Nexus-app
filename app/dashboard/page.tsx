@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, Timer, Activity, Flame, Lock, User } from "lucide-react";
+import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, Timer, Activity, Flame, Lock, Trash2 } from "lucide-react";
 import Leaderboard from "@/components/Leaderboard";
 
 // --- TYPES ---
@@ -47,8 +47,6 @@ export default function DashboardPage() {
   const [megaphone, setMegaphone] = useState<Megaphone>({ msg: "WAITING FOR SIGNAL...", bid: 0, owner: "SYSTEM", decayedPrice: 0 });
   const [floatingPoints, setFloatingPoints] = useState<FloatingPoint[]>([]);
   const [districtActivity, setDistrictActivity] = useState<Record<string, number>>({});
-  
-  // NEW: Presence state added without removing existing counts
   const [presenceCounts, setPresenceCounts] = useState<Record<string, number>>({});
 
   const lastTap = useRef<number>(0);
@@ -100,6 +98,26 @@ export default function DashboardPage() {
         if (matches) matches.forEach((t: string) => tags[t.toLowerCase()] = (tags[t.toLowerCase()] || 0) + 1);
       });
       setTrendingTags(Object.keys(tags).sort((a, b) => tags[b] - tags[a]).slice(0, 6));
+    }
+  };
+
+  // --- DELETE FUNCTION ---
+  const deleteMessage = async (messageId: string, authorId: string) => {
+    // Permission check: Is user the author OR a founder?
+    const canDelete = profile?.id === authorId || profile?.is_founder;
+    
+    if (!canDelete) return triggerToast("ACCESS_DENIED");
+
+    const { error } = await supabase
+      .from("messages")
+      .delete()
+      .eq("id", messageId);
+
+    if (!error) {
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      triggerToast("SIGNAL_DELETED");
+    } else {
+      triggerToast("DELETE_FAILED");
     }
   };
 
@@ -173,17 +191,13 @@ export default function DashboardPage() {
 
   useEffect(() => { loadNexus(); }, []);
 
-  // --- UPDATED PRESENCE LOOP (FIXED GHOSTING) ---
   useEffect(() => {
     if (!profile || districts.length === 0) return;
-
     const activeChannels: any[] = [];
-
     districts.forEach(district => {
       const channel = supabase.channel(`presence:${district.slug}`, {
         config: { presence: { key: profile.id } }
       });
-
       channel
         .on('presence', { event: 'sync' }, () => {
           const state = channel.presenceState();
@@ -191,19 +205,15 @@ export default function DashboardPage() {
         })
         .subscribe(async (status) => {
           if (status === 'SUBSCRIBED') {
-            // Only track presence if this is the active room
             if (activeDistrict?.slug === district.slug) {
               await channel.track({ online_at: new Date().toISOString() });
             } else {
-              // Ensure we aren't tracked in rooms we aren't viewing
               await channel.untrack();
             }
           }
         });
-      
       activeChannels.push(channel);
     });
-
     return () => {
       activeChannels.forEach(ch => {
         ch.untrack();
@@ -220,7 +230,11 @@ export default function DashboardPage() {
           const { data: uData } = await supabase.from("profiles").select("username, signal_score").eq("id", payload.new.profile_id).single();
           setMessages((prev) => [...prev, { ...payload.new, profiles: uData } as Message]);
           setDistrictActivity(prev => ({ ...prev, [activeDistrict.slug]: (prev[activeDistrict.slug] || 0) + 1 }));
-        }).subscribe();
+        })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "messages" }, (payload) => {
+          setMessages((prev) => prev.filter((m) => m.id !== payload.old.id));
+      })
+      .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [activeDistrict?.slug, profile?.id]);
 
@@ -396,13 +410,31 @@ export default function DashboardPage() {
               <>
                 {filteredMessages.map((msg) => {
                   const hasHotTag = msg.content.match(/#\w+/g)?.some(tag => frequencyMap[tag.toUpperCase()] > 5);
+                  const canDelete = profile?.id === msg.profile_id || profile?.is_founder;
+
                   return (
-                    <div key={msg.id} onClick={(e) => handleDoubleTap(e, msg.profile_id)} className="flex flex-col gap-1 max-w-[95%] cursor-pointer group">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black text-zinc-500 uppercase">{msg.profiles?.username || 'ANON'}</span>
-                        <span className="text-[8px] text-zinc-800 uppercase">{new Date(msg.created_at).toLocaleTimeString()}</span>
+                    <div key={msg.id} className="flex flex-col gap-1 max-w-[95%] group relative">
+                      <div className="flex items-center justify-between w-full">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-black text-zinc-500 uppercase">{msg.profiles?.username || 'ANON'}</span>
+                          <span className="text-[8px] text-zinc-800 uppercase">{new Date(msg.created_at).toLocaleTimeString()}</span>
+                        </div>
+                        
+                        {/* DELETE BUTTON - Only visible to Owner or Founder */}
+                        {canDelete && (
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); deleteMessage(msg.id, msg.profile_id); }}
+                            className="opacity-0 group-hover:opacity-100 p-1 text-red-500/50 hover:text-red-500 transition-all ml-4"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
                       </div>
-                      <div className={`p-4 rounded-xl border transition-all ${hasHotTag ? 'border-blue-500 bg-blue-500/5 shadow-[0_0_15px_rgba(59,130,246,0.1)]' : 'border-white/5 bg-white/[0.02]'}`}>
+                      
+                      <div 
+                        onClick={(e) => handleDoubleTap(e, msg.profile_id)}
+                        className={`p-4 rounded-xl border transition-all cursor-pointer ${hasHotTag ? 'border-blue-500 bg-blue-500/5 shadow-[0_0_15px_rgba(59,130,246,0.1)]' : 'border-white/5 bg-white/[0.02]'}`}
+                      >
                         <p className={`text-sm ${hasHotTag ? 'text-blue-100 font-bold' : 'text-zinc-300'}`}>{msg.content}</p>
                       </div>
                     </div>
