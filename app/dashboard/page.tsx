@@ -26,7 +26,7 @@ export default function DashboardPage() {
   const mainHubs = useMemo(() => districts.filter(d => !d.parent_slug && d.slug !== 'lobby'), [districts]);
   const subTiers = useMemo(() => districts.filter(d => d.parent_slug === 'finance'), [districts]);
   
-  const isFinanceSector = activeDistrict?.slug.includes('finance');
+  const isFinanceSector = activeDistrict?.slug === 'finance' || activeDistrict?.slug.startsWith('finance-');
   const hasHashtag = useMemo(() => /#\w+/.test(newMessage), [newMessage]);
   const currentReward = hasHashtag || activeHashtag ? 5 : 3;
 
@@ -108,6 +108,7 @@ export default function DashboardPage() {
 
     if (!error) {
       setNewMessage("");
+      // Refresh profile to see immediate XP gain
       const { data } = await supabase.from("profiles").select("*").eq("id", profile.id).single();
       if (data) setProfile(data);
     }
@@ -160,7 +161,7 @@ export default function DashboardPage() {
 
       <main className="flex-1 overflow-hidden bg-[#020202]">
         {view === 'admin' ? (
-          /* --- DASHBOARD (KEPT ORIGINAL) --- */
+          /* DASHBOARD */
           <div className="h-full overflow-y-auto max-w-6xl mx-auto p-12 space-y-12">
             <header className="border-b border-white/5 pb-10">
               <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em]">Node_Operator</p>
@@ -185,10 +186,10 @@ export default function DashboardPage() {
             </div>
           </div>
         ) : (
-          /* --- CHAT INTERFACE --- */
-          <div className={`h-full flex relative animate-in slide-in-from-bottom duration-500`}>
+          /* CHAT INTERFACE */
+          <div className="h-full flex relative">
             
-            {/* SECTOR SIDEBAR (Locked by Finance XP) */}
+            {/* SECTOR SIDEBAR */}
             {isFinanceSector && (
               <aside className="w-52 border-r border-white/5 bg-black flex flex-col p-4 gap-4 animate-in slide-in-from-left">
                 <div className="flex flex-col gap-1 mb-2">
@@ -196,7 +197,7 @@ export default function DashboardPage() {
                     <Layers size={14} />
                     <span className="text-[9px] font-black uppercase tracking-tighter">Finance_Tiers</span>
                   </div>
-                  <p className="text-[8px] text-zinc-600 font-bold uppercase tracking-widest">XP_Level: {profile.finance_xp || 0}</p>
+                  <p className="text-[8px] text-zinc-600 font-bold uppercase tracking-widest">Local_XP: {profile.finance_xp || 0}</p>
                 </div>
                 
                 <div className="flex flex-col gap-2">
@@ -219,17 +220,13 @@ export default function DashboardPage() {
               </aside>
             )}
 
-            {/* MAIN CHAT - FIXED CENTERED MESSAGES */}
+            {/* MAIN CHAT */}
             <div className="flex-1 flex flex-col relative bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:40px_40px]">
-              
-              <div className="px-8 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md flex items-center justify-between z-10">
+              <div className="px-8 py-3 border-b border-white/5 bg-black/80 flex items-center justify-between z-10">
                 <div className="flex items-center gap-3">
-                  {isFinanceSector ? <DollarSign className="text-emerald-500 animate-pulse" size={14} /> : <Radio className="text-blue-400 animate-pulse" size={14} />}
+                  {isFinanceSector ? <DollarSign className="text-emerald-500" size={14} /> : <Radio className="text-blue-400" size={14} />}
                   <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">{activeDistrict.name}</span>
                 </div>
-                {activeHashtag && (
-                  <button onClick={() => setActiveHashtag(null)} className="text-[8px] flex items-center gap-1 text-zinc-500 hover:text-white uppercase font-black"><X size={10} /> Clear_Filter</button>
-                )}
               </div>
 
               <div className="flex-1 overflow-y-auto scrollbar-hide">
@@ -237,11 +234,11 @@ export default function DashboardPage() {
                   {filteredMessages.map((m) => (
                     <div key={m.id} className="flex flex-col gap-1.5 animate-in fade-in">
                       <div className="flex items-center gap-2">
-                        <span className={`text-[10px] font-black uppercase ${isFinanceSector ? 'text-emerald-500/50' : 'text-white/50'}`}>{m.profiles?.username || 'ANON_UNIT'}</span>
-                        <span className="text-[8px] font-bold text-zinc-700 tabular-nums">[{m.profiles?.signal_score}]</span>
+                        <span className="text-[10px] font-black uppercase text-white/50">{m.profiles?.username}</span>
+                        <span className="text-[8px] font-bold text-zinc-700">[{m.profiles?.signal_score}]</span>
                       </div>
-                      <div className={`bg-white/[0.02] border-l p-4 rounded-r-sm ${isFinanceSector ? 'border-emerald-500/20 bg-emerald-500/[0.01]' : 'border-white/10'}`}>
-                        <p className={`text-[15px] leading-relaxed font-medium ${isFinanceSector ? 'text-emerald-50/90 font-mono tracking-tight' : 'text-zinc-300'}`}>{m.content}</p>
+                      <div className="bg-white/[0.02] border-l border-white/10 p-4">
+                        <p className="text-[15px] text-zinc-300">{m.content}</p>
                       </div>
                     </div>
                   ))}
@@ -249,52 +246,37 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* INPUT AREA WITH REWARD INDICATORS */}
+              {/* INPUT AREA */}
               <div className="p-8 border-t border-white/5 bg-black">
                 <form onSubmit={transmitSignal} className="max-w-2xl mx-auto">
-                  <div className={`relative flex items-center bg-white/5 border rounded-sm transition-all overflow-hidden ${isFinanceSector ? 'border-emerald-500/20 focus-within:border-emerald-500' : 'border-white/10 focus-within:border-emerald-500/50'}`}>
-                    <div className="pl-4 text-zinc-700">{isFinanceSector ? <TrendingUp size={14} className="text-emerald-500" /> : <Zap size={14} />}</div>
-                    <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase tracking-widest placeholder:text-zinc-800" placeholder={isFinanceSector ? "EXECUTE_TRADE_SIGNAL..." : "TRANSMIT_SIGNAL..."} />
-                    <button type="submit" className={`px-8 border-l font-black text-xs uppercase transition-all ${isFinanceSector ? 'bg-emerald-600 text-black border-emerald-500 hover:bg-white' : 'bg-zinc-900 border-white/10 text-emerald-500 hover:bg-emerald-500 hover:text-black'}`}>Broadcast</button>
+                  <div className={`flex items-center bg-white/5 border rounded-sm overflow-hidden transition-all ${isFinanceSector ? 'border-emerald-500/20 focus-within:border-emerald-500' : 'border-white/10 focus-within:border-emerald-500/50'}`}>
+                    <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase placeholder:text-zinc-800" placeholder="TRANSMIT..." />
+                    <button type="submit" className="px-8 h-full bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500">Broadcast</button>
                   </div>
-                  
-                  {/* RESTORED REWARD STATUS UNDER INPUT */}
                   <div className="flex justify-between mt-2 px-1">
-                    <p className={`text-[8px] uppercase font-black transition-all duration-300 ${currentReward === 5 ? 'text-emerald-400 animate-pulse' : 'text-zinc-700'}`}>
-                      {currentReward === 5 ? '>>> HIGH_VALUE_SIGNAL_DETECTED' : '>>> STANDARD_SIGNAL_PROTOCOL'}
-                    </p>
-                    <p className="text-[8px] text-zinc-500 uppercase font-bold">
-                      Potential_Yield: <span className={currentReward === 5 ? 'text-emerald-500' : 'text-zinc-400'}>{currentReward} SP</span>
-                    </p>
+                    <p className="text-[8px] text-zinc-700 font-black uppercase tracking-widest">Potential_Yield: {currentReward} SP</p>
+                    <p className="text-[8px] text-zinc-500 uppercase font-black">{isFinanceSector ? ">>> ROUTING_TO_FINANCE_XP" : ">>> GLOBAL_ROUTING"}</p>
                   </div>
                 </form>
               </div>
             </div>
 
-            {/* SIDEBAR WITH RESTORED YIELD INFO BOTTOM RIGHT */}
+            {/* SIDEBAR */}
             <aside className="w-80 bg-black border-l border-white/5 p-6 flex flex-col gap-8">
-              <div className="space-y-4">
-                <div className={`flex items-center gap-2 ${isFinanceSector ? 'text-emerald-500' : 'text-blue-500'}`}><Hash size={16} /><h3 className="text-[11px] font-black uppercase tracking-widest">Trending_Signals</h3></div>
-                <div className="space-y-2 overflow-y-auto max-h-[60vh] scrollbar-hide">
+               <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-zinc-500"><Hash size={16} /><h3 className="text-[11px] font-black uppercase tracking-widest">Trending</h3></div>
                   {trendingTags.map(([tag, count]) => (
-                    <button key={tag} onClick={() => setActiveHashtag(tag)} className={`w-full flex justify-between items-center p-3 rounded-sm border transition-all ${activeHashtag === tag ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-500' : 'bg-white/5 border-white/5 text-zinc-500 hover:border-white/20'}`}>
-                      <span className="text-[10px] font-bold tracking-widest">{tag}</span>
-                      <span className="text-[8px] font-black opacity-30 tabular-nums">{count}</span>
+                    <button key={tag} onClick={() => setActiveHashtag(tag)} className="w-full flex justify-between items-center p-3 bg-white/5 border border-white/5 text-[10px] font-bold">
+                      <span className="text-zinc-400">{tag}</span>
+                      <span className="opacity-30">{count}</span>
                     </button>
                   ))}
-                </div>
-              </div>
-
-              {/* RESTORED YIELD PROTOCOL INFO BOX */}
-              <div className={`mt-auto p-4 border rounded ${isFinanceSector ? 'border-emerald-500/20 bg-emerald-500/[0.02]' : 'border-blue-500/20 bg-blue-500/[0.02]'}`}>
-                <p className={`text-[9px] font-black uppercase mb-2 ${isFinanceSector ? 'text-emerald-400' : 'text-blue-400'}`}>Mining_Protocol</p>
+               </div>
+               <div className={`mt-auto p-4 border rounded ${isFinanceSector ? 'border-emerald-500/20 bg-emerald-500/[0.02]' : 'border-blue-500/20 bg-blue-500/[0.02]'}`}>
+                <p className="text-[9px] font-black uppercase mb-2 text-zinc-500">Protocol_Value</p>
                 <div className="space-y-1 text-[9px] uppercase font-bold">
-                  <div className="flex justify-between"><span className="text-zinc-500">Generic Chat</span><span className="text-zinc-300">3 SP</span></div>
-                  <div className="flex justify-between"><span className="text-emerald-500">Hashtag Tagged</span><span className="text-emerald-500">5 SP</span></div>
-                  <div className="mt-2 pt-2 border-t border-white/5 flex justify-between items-center opacity-50 italic">
-                    <span className="text-[8px]">Sector Routing:</span>
-                    <span className="text-[8px]">{isFinanceSector ? "FINANCE_XP" : "GLOBAL_SIGNAL"}</span>
-                  </div>
+                  <div className="flex justify-between"><span>Base Signal</span><span className="text-zinc-300">3 SP</span></div>
+                  <div className="flex justify-between text-emerald-500"><span>Tagged Intel</span><span>5 SP</span></div>
                 </div>
               </div>
             </aside>
