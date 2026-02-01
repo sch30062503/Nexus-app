@@ -3,11 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, Timer, Activity, Flame, Lock } from "lucide-react";
+import { Menu, X, ChevronUp, Radio, Zap, ShieldAlert, Target, Hash, Share2, Award, Clock, Users, Trophy, Settings, Coins, Megaphone as MegaphoneIcon, Timer, Activity, Flame, Lock, User } from "lucide-react";
 import Leaderboard from "@/components/Leaderboard";
 
 type District = { slug: string; name: string; min_score: number; description: string; last_activity?: string };
-
 type Profile = { 
   id: string; 
   email: string | null; 
@@ -18,9 +17,9 @@ type Profile = {
   referral_code: string;
   dividend_earned: number;
 };
-
 type Message = { id: string; content: string; created_at: string; district_slug: string; is_founder_msg: boolean; profile_id: string; profiles?: { username: string, signal_score: number } };
 type Megaphone = { msg: string; bid: number; owner: string; decayedPrice: number };
+type FloatingPoint = { id: number; x: number; y: number };
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -34,22 +33,20 @@ export default function DashboardPage() {
   const [feverMode, setFeverMode] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [trendingTags, setTrendingTags] = useState<string[]>([]);
-  
   const [activeFrequency, setActiveFrequency] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState(""); 
-  
   const [newUsername, setNewUsername] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [timeLeft, setTimeLeft] = useState("");
   const [copied, setCopied] = useState(false);
-
   const [showMegaModal, setShowMegaModal] = useState(false);
   const [megaBid, setMegaBid] = useState(0);
   const [megaMsg, setMegaMsg] = useState("");
-
-  const lastTap = useRef<number>(0);
   const [megaphone, setMegaphone] = useState<Megaphone>({ msg: "WAITING FOR SIGNAL...", bid: 0, owner: "SYSTEM", decayedPrice: 0 });
+  const [floatingPoints, setFloatingPoints] = useState<FloatingPoint[]>([]);
+  
+  const lastTap = useRef<number>(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const triggerToast = (msg: string) => {
@@ -57,37 +54,88 @@ export default function DashboardPage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const frequencyMap = useMemo(() => {
-    const counts: Record<string, number> = {};
-    messages.forEach(m => {
-      const tags = m.content.match(/#\w+/g);
-      if (tags) tags.forEach(tag => {
-        const t = tag.toUpperCase();
-        counts[t] = (counts[t] || 0) + 1;
-      });
-    });
-    return counts;
-  }, [messages]);
-
-  const filteredMessages = useMemo(() => {
-    return messages.filter(m => {
-      const content = m.content.toUpperCase();
-      const matchesSearch = content.includes(filterQuery.toUpperCase());
-      const matchesFrequency = activeFrequency ? content.includes(`#${activeFrequency.toUpperCase()}`) : true;
-      return matchesSearch && matchesFrequency;
-    });
-  }, [messages, filterQuery, activeFrequency]);
-
-  const handleDoubleTap = async (targetUserId: string) => {
+  // --- LOGIC REFINEMENTS START ---
+  
+  const handleDoubleTap = async (e: React.MouseEvent, targetUserId: string) => {
     const now = Date.now();
     if (now - lastTap.current < 300) {
       if (targetUserId === profile?.id) return triggerToast("CANNOT_BOOST_SELF");
+      
+      const newPoint = { id: Date.now(), x: e.clientX, y: e.clientY };
+      setFloatingPoints(prev => [...prev, newPoint]);
+      setTimeout(() => setFloatingPoints(prev => prev.filter(p => p.id !== newPoint.id)), 800);
+
       await supabase.rpc('increment_signal_with_dividend', { user_id: targetUserId, amount: 1 });
       triggerToast("SIGNAL_BOOSTED");
     }
     lastTap.current = now;
   };
 
+  const handleTakeover = async () => {
+    if (!profile || megaBid <= (megaphone.decayedPrice || 0)) return triggerToast("BID_MUST_EXCEED_DECAY");
+    if (megaBid > (profile.signal_score || 0)) return triggerToast("INSUFFICIENT_SIGNAL");
+
+    const { error } = await supabase.rpc('takeover_megaphone', {
+      user_id: profile.id,
+      new_message: megaMsg.toUpperCase(),
+      bid_amount: megaBid
+    });
+    if (!error) { 
+      triggerToast("SIGNAL_BROADCASTED"); 
+      setShowMegaModal(false); 
+      setProfile(prev => prev ? { ...prev, signal_score: (prev.signal_score || 0) - megaBid } : null);
+      loadNexus(); 
+    }
+  };
+
+  // --- DATA FETCHING ---
+
+  const loadNexus = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return router.replace("/");
+    const { data: pData } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
+    if (pData) setProfile(pData as Profile);
+    const { data: dData } = await supabase.from("districts").select("*").order('min_score', { ascending: true });
+    if (dData) { 
+        setDistricts(dData); 
+        if (!activeDistrict) {
+            setActiveDistrict(dData[0]);
+            fetchMsgs(dData[0].slug);
+        }
+    }
+    const { data: megaData } = await supabase.rpc('get_decayed_bid');
+    if (megaData?.[0]) setMegaphone({ msg: megaData[0].current_message, bid: megaData[0].bid_amount, owner: megaData[0].owner_username, decayedPrice: megaData[0].decayed_price });
+    setLoading(false);
+  };
+
+  const fetchMsgs = async (slug: string) => {
+    const { data } = await supabase.from("messages").select("*, profiles(username, signal_score)").eq("district_slug", slug).order("created_at", { ascending: true }).limit(100);
+    if (data) {
+      setMessages(data as any);
+      const counts: Record<string, number> = {};
+      data.forEach((m: any) => {
+        const tags = m.content.match(/#\w+/g);
+        if (tags) tags.forEach((t: string) => counts[t.toLowerCase()] = (counts[t.toLowerCase()] || 0) + 1);
+      });
+      setTrendingTags(Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 6));
+    }
+  };
+
+  useEffect(() => { loadNexus(); }, []);
+
+  // Realtime Messages (Fixed dependency array to prevent loops)
+  useEffect(() => {
+    if (!activeDistrict || !profile) return;
+    const channel = supabase.channel(`nexus-${activeDistrict.slug}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `district_slug=eq.${activeDistrict.slug}` }, 
+        async (payload) => {
+          const { data: uData } = await supabase.from("profiles").select("username, signal_score").eq("id", payload.new.profile_id).single();
+          setMessages((prev) => [...prev, { ...payload.new, profiles: uData } as Message]);
+        }).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [activeDistrict?.slug]);
+
+  // Realtime Fever Mode
   useEffect(() => {
     const fetchFeverState = async () => {
       const { data } = await supabase.from('system_settings').select('value').eq('key', 'fever_mode').single();
@@ -124,60 +172,27 @@ export default function DashboardPage() {
     }
   };
 
-  const handleTakeover = async () => {
-    if (!profile || megaBid <= (megaphone.decayedPrice || 0)) return triggerToast("BID_MUST_EXCEED_DECAY");
-    const { error } = await supabase.rpc('takeover_megaphone', {
-      user_id: profile.id,
-      new_message: megaMsg.toUpperCase(),
-      bid_amount: megaBid
-    });
-    if (!error) { triggerToast("SIGNAL_BROADCASTED"); setShowMegaModal(false); loadNexus(); }
-  };
-
-  const loadNexus = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.user) return router.replace("/");
-    const { data: pData } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
-    if (pData) setProfile(pData as Profile);
-    const { data: dData } = await supabase.from("districts").select("*").order('min_score', { ascending: true });
-    if (dData) { 
-        setDistricts(dData); 
-        if (!activeDistrict) {
-            setActiveDistrict(dData[0]);
-            fetchMsgs(dData[0].slug);
-        }
+  const sendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !profile || isCooldown || !activeDistrict) return;
+    let content = newMessage;
+    if (activeFrequency && !content.toUpperCase().includes(`#${activeFrequency}`)) {
+      content = `${newMessage} #${activeFrequency}`;
     }
-    const { data: megaData } = await supabase.rpc('get_decayed_bid');
-    if (megaData?.[0]) setMegaphone({ msg: megaData[0].current_message, bid: megaData[0].bid_amount, owner: megaData[0].owner_username, decayedPrice: megaData[0].decayed_price });
-    setLoading(false);
-  };
-
-  const fetchMsgs = async (slug: string) => {
-    const { data } = await supabase.from("messages").select("*, profiles(username, signal_score)").eq("district_slug", slug).order("created_at", { ascending: true }).limit(100);
-    if (data) {
-      setMessages(data as any);
-      const counts: Record<string, number> = {};
-      data.forEach((m: any) => {
-        const tags = m.content.match(/#\w+/g);
-        if (tags) tags.forEach((t: string) => counts[t.toLowerCase()] = (counts[t.toLowerCase()] || 0) + 1);
-      });
-      setTrendingTags(Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 6));
+    setIsCooldown(true);
+    await supabase.from("messages").insert({ content, profile_id: profile.id, district_slug: activeDistrict.slug, is_founder_msg: profile.is_founder });
+    
+    // Optimistic Point Increase
+    if (!profile.is_founder) {
+      const points = feverMode ? 10 : 5;
+      await supabase.rpc('increment_signal_with_dividend', { user_id: profile.id, amount: points });
+      setProfile(prev => prev ? { ...prev, signal_score: (prev.signal_score || 0) + points } : null);
     }
+    setNewMessage("");
+    setTimeout(() => setIsCooldown(false), 800);
   };
 
-  useEffect(() => { loadNexus(); }, []);
-
-  useEffect(() => {
-    if (!activeDistrict || !profile) return;
-    const channel = supabase.channel(`nexus-${activeDistrict.slug}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `district_slug=eq.${activeDistrict.slug}` }, 
-        async (payload) => {
-          const { data: uData } = await supabase.from("profiles").select("username, signal_score").eq("id", payload.new.profile_id).single();
-          setMessages((prev) => [...prev, { ...payload.new, profiles: uData } as Message]);
-        }).subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [activeDistrict, profile]);
-
+  // Helper logic
   useEffect(() => {
     const timer = setInterval(() => {
       const now = new Date();
@@ -193,24 +208,7 @@ export default function DashboardPage() {
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [filteredMessages]);
-
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMessage.trim() || !profile || isCooldown || !activeDistrict) return;
-    let content = newMessage;
-    if (activeFrequency && !content.toUpperCase().includes(`#${activeFrequency}`)) {
-      content = `${newMessage} #${activeFrequency}`;
-    }
-    setIsCooldown(true);
-    await supabase.from("messages").insert({ content, profile_id: profile.id, district_slug: activeDistrict.slug, is_founder_msg: profile.is_founder });
-    if (!profile.is_founder) {
-      const points = feverMode ? 10 : 5;
-      await supabase.rpc('increment_signal_with_dividend', { user_id: profile.id, amount: points });
-    }
-    setNewMessage("");
-    setTimeout(() => setIsCooldown(false), 800);
-  };
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, filterQuery]);
 
   const copyReferral = () => {
     const link = `${window.location.origin}/signup?ref=${profile?.referral_code}`;
@@ -220,12 +218,35 @@ export default function DashboardPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const frequencyMap = useMemo(() => {
+    const counts: Record<string, number> = {};
+    messages.forEach(m => {
+      const tags = m.content.match(/#\w+/g);
+      if (tags) tags.forEach(tag => { counts[tag.toUpperCase()] = (counts[tag.toUpperCase()] || 0) + 1; });
+    });
+    return counts;
+  }, [messages]);
+
+  const filteredMessages = useMemo(() => {
+    return messages.filter(m => {
+      const content = m.content.toUpperCase();
+      const matchesSearch = content.includes(filterQuery.toUpperCase());
+      const matchesFrequency = activeFrequency ? content.includes(`#${activeFrequency.toUpperCase()}`) : true;
+      return matchesSearch && matchesFrequency;
+    });
+  }, [messages, filterQuery, activeFrequency]);
+
   if (loading || !profile) return <div className="h-screen flex items-center justify-center bg-black font-mono text-emerald-500 text-xs uppercase">Syncing_Nexus...</div>;
 
   return (
     <div className={`h-[100dvh] flex flex-col font-mono bg-black text-zinc-400 overflow-hidden ${feverMode ? 'ring-inset ring-4 ring-orange-500/10' : ''}`}>
       
-      {/* 🏁 GLOBAL HUD */}
+      {/* --- FLOATING PARTICLES --- */}
+      {floatingPoints.map(p => (
+        <span key={p.id} style={{ left: p.x, top: p.y }} className="fixed pointer-events-none text-emerald-400 font-black text-[10px] animate-bounce z-[300] -translate-y-8">+1_SIGNAL</span>
+      ))}
+
+      {/* GLOBAL HUD */}
       <div className={`${feverMode ? 'bg-orange-500 animate-pulse' : 'bg-emerald-500'} text-black py-1 px-4 flex justify-between items-center z-[100]`}>
         <span className="text-[10px] font-black uppercase flex items-center gap-1">
           {feverMode ? <Zap size={12} fill="black"/> : <Radio size={12}/>} 
@@ -236,67 +257,46 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* NEW HEADER AREA WITH ZONE NAV */}
       <div className="flex flex-col border-b border-white/5 bg-black/80 z-[70]">
         <div className="flex items-center justify-between px-4 py-3">
             <div className="flex items-center gap-4">
-            <button onClick={() => setIsSidebarOpen(true)} className="p-1 text-emerald-500 lg:hidden"><Menu size={24} /></button>
-            <div className="flex flex-col">
-                <span className="text-[9px] text-zinc-600 font-black uppercase tracking-tighter">Terminal_v3.0</span>
-                <span className="text-xs text-white font-black uppercase tracking-widest">SIGNAL_SCORE: {profile.signal_score?.toLocaleString()}</span>
-            </div>
+              <button onClick={() => setIsSidebarOpen(true)} className="p-1 text-emerald-500 lg:hidden"><Menu size={24} /></button>
+              <div className="flex flex-col">
+                  <span className="text-[9px] text-zinc-600 font-black uppercase tracking-tighter">Terminal_v3.0</span>
+                  <span className="text-xs text-white font-black uppercase tracking-widest">SIGNAL_SCORE: {profile.signal_score?.toLocaleString()}</span>
+              </div>
             </div>
             <button onClick={() => setShowLeaderboard(!showLeaderboard)} className={`px-3 py-1 rounded text-[9px] font-black uppercase border transition-all flex items-center gap-2 ${showLeaderboard ? 'bg-emerald-500 text-black border-emerald-500' : 'text-emerald-500 border-emerald-500/30'}`}>
-            <Trophy size={10} /> {showLeaderboard ? "Close_Rank" : "Rankings"}
+              <Trophy size={10} /> {showLeaderboard ? "Close_Rank" : "Rankings"}
             </button>
         </div>
 
-        {/* 🗺️ HORIZONTAL ZONE BAR WITH SIGNAL MAP */}
-<div className="flex items-center gap-2 px-4 pb-3 overflow-x-auto no-scrollbar scroll-smooth">
-    {districts.map((d) => {
-        const isLocked = (profile.signal_score || 0) < d.min_score;
-        const isActive = activeDistrict?.slug === d.slug;
-        
-        // Calculate "Heat" - this could later be tied to real message counts from Supabase
-        const isHot = messages.filter(m => m.district_slug === d.slug).length > 20;
-
-        return (
-            <button 
-                key={d.slug} 
-                disabled={isLocked}
-                onClick={() => { setActiveDistrict(d); fetchMsgs(d.slug); }} 
-                className={`flex-shrink-0 flex items-center gap-3 px-4 py-2 rounded-full border text-[10px] font-black uppercase transition-all
-                ${isActive ? 'bg-emerald-500 border-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 
-                  isLocked ? 'border-white/5 text-zinc-800 cursor-not-allowed' : 'border-white/10 text-zinc-400 hover:border-emerald-500/50 hover:bg-white/[0.02]'}`}
-            >
-                <div className="relative">
-                    {isLocked ? <Lock size={10}/> : <Radio size={10} className={isActive ? "animate-pulse" : ""}/>}
-                    {!isLocked && isHot && (
-                        <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full animate-ping" />
-                    )}
-                </div>
-                
-                <div className="flex flex-col items-start leading-none">
-                    <span>{d.name}</span>
-                    {!isLocked && (
-                        <span className={`text-[7px] mt-0.5 ${isActive ? 'text-black/60' : 'text-zinc-600'}`}>
-                            {isHot ? "HIGH_SIGNAL" : "STABLE"}
-                        </span>
-                    )}
-                </div>
-
-                {isLocked && (
-                    <span className="text-[8px] bg-zinc-900 px-1.5 py-0.5 rounded text-zinc-600">
-                        {d.min_score}
-                    </span>
-                )}
-            </button>
-        );
-    })}
-</div>
+        <div className="flex items-center gap-2 px-4 pb-3 overflow-x-auto no-scrollbar scroll-smooth">
+            {districts.map((d) => {
+                const isLocked = (profile.signal_score || 0) < d.min_score;
+                const isActive = activeDistrict?.slug === d.slug;
+                return (
+                    <button 
+                        key={d.slug} 
+                        disabled={isLocked}
+                        onClick={() => { setActiveDistrict(d); fetchMsgs(d.slug); }} 
+                        className={`flex-shrink-0 flex items-center gap-3 px-4 py-2 rounded-full border text-[10px] font-black uppercase transition-all
+                        ${isActive ? 'bg-emerald-500 border-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 
+                          isLocked ? 'border-white/5 text-zinc-800 cursor-not-allowed' : 'border-white/10 text-zinc-400 hover:border-emerald-500/50 hover:bg-white/[0.02]'}`}
+                    >
+                        {isLocked ? <Lock size={10}/> : <Radio size={10} className={isActive ? "animate-pulse" : ""}/>}
+                        <div className="flex flex-col items-start leading-none">
+                            <span>{d.name}</span>
+                            {!isLocked && <span className={`text-[7px] mt-0.5 ${isActive ? 'text-black/60' : 'text-zinc-600'}`}>STABLE</span>}
+                        </div>
+                    </button>
+                );
+            })}
+        </div>
+      </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* SIDEBAR */}
+        {/* SIDEBAR - FULLY RESTORED */}
         <aside className={`fixed inset-0 z-[80] lg:relative lg:translate-x-0 w-full sm:w-80 bg-black border-r border-white/5 flex flex-col transition-transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
           <div className="flex items-center justify-between p-6 border-b border-white/5">
               <span className="text-xs font-black text-emerald-500 uppercase tracking-widest">Control_Center</span>
@@ -304,7 +304,6 @@ export default function DashboardPage() {
           </div>
 
           <div className="p-6 flex-1 overflow-y-auto space-y-8 scrollbar-hide">
-            
             {profile?.is_founder && (
               <div className="p-4 border border-orange-500/50 bg-orange-500/5 rounded-xl space-y-3">
                 <p className="text-[10px] text-orange-500 font-black uppercase flex items-center gap-2"><ShieldAlert size={12}/> System_Override</p>
@@ -363,23 +362,16 @@ export default function DashboardPage() {
           <div className="flex-1 overflow-y-auto p-4 lg:p-10 space-y-6 scrollbar-hide">
             {showLeaderboard ? <Leaderboard /> : (
               <>
-                {(activeFrequency || filterQuery) && (
-                  <div className="flex items-center justify-between bg-blue-500/10 border border-blue-500/30 p-2 rounded-lg mb-4">
-                    <span className="text-[10px] text-blue-500 font-black uppercase">LOCKED: {activeFrequency ? `#${activeFrequency}` : filterQuery}</span>
-                    <button onClick={() => {setActiveFrequency(null); setFilterQuery("");}} className="text-[9px] text-white font-black underline">CLEAR</button>
-                  </div>
-                )}
-                
                 {filteredMessages.map((msg) => {
                   const hasHotTag = msg.content.match(/#\w+/g)?.some(tag => frequencyMap[tag.toUpperCase()] > 5);
                   return (
-                    <div key={msg.id} onClick={() => handleDoubleTap(msg.profile_id)} className={`flex flex-col gap-1 max-w-[95%] cursor-pointer group`}>
+                    <div key={msg.id} onClick={(e) => handleDoubleTap(e, msg.profile_id)} className="flex flex-col gap-1 max-w-[95%] cursor-pointer group">
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-black text-zinc-500 uppercase">{msg.profiles?.username || 'ANON'}</span>
                         <span className="text-[8px] text-zinc-800 uppercase">{new Date(msg.created_at).toLocaleTimeString()}</span>
                       </div>
-                      <div className={`p-4 rounded-xl border transition-all ${hasHotTag ? 'border-blue-500 bg-blue-500/5' : 'border-white/5 bg-white/[0.02]'}`}>
-                        <p className={`text-sm ${hasHotTag ? 'text-blue-100' : 'text-zinc-300'}`}>{msg.content}</p>
+                      <div className={`p-4 rounded-xl border transition-all ${hasHotTag ? 'border-blue-500 bg-blue-500/5 shadow-[0_0_15px_rgba(59,130,246,0.1)]' : 'border-white/5 bg-white/[0.02]'}`}>
+                        <p className={`text-sm ${hasHotTag ? 'text-blue-100 font-bold' : 'text-zinc-300'}`}>{msg.content}</p>
                       </div>
                     </div>
                   );
@@ -393,14 +385,14 @@ export default function DashboardPage() {
             <div className="p-4 lg:p-8 bg-black">
               <form onSubmit={sendMessage} className={`flex items-center gap-2 bg-white/5 border rounded-2xl px-4 py-1 transition-all ${activeFrequency ? 'border-blue-500' : 'border-white/10'}`}>
                   <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="INPUT_SIGNAL..." className="flex-1 bg-transparent py-4 text-sm text-white outline-none uppercase font-bold" />
-                  <button type="submit" className={`p-2 rounded-lg text-black ${activeFrequency ? 'bg-blue-500' : 'bg-emerald-500'}`}><ChevronUp size={20}/></button>
+                  <button type="submit" className={`p-2 rounded-lg text-black ${activeFrequency ? 'bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]'}`}><ChevronUp size={20}/></button>
               </form>
             </div>
           )}
         </main>
       </div>
 
-      {/* MODALS */}
+      {/* MODAL: Megaphone */}
       {showMegaModal && (
         <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4">
           <div className="w-full max-w-md border border-emerald-500/30 bg-zinc-950 p-6 rounded-2xl space-y-6">
