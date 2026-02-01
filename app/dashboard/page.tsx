@@ -23,17 +23,10 @@ export default function DashboardPage() {
 
   // --- DERIVED DATA ---
   const theLobby = useMemo(() => districts.find(d => d.slug === 'lobby'), [districts]);
-  
-  // Main Hubs (Finance Hub, etc.) - These use 'signal_score' (Lobby points)
   const mainHubs = useMemo(() => districts.filter(d => !d.parent_slug && d.slug !== 'lobby'), [districts]);
-
-  // Sub Tiers (Finance Seed, Finance Whale) - These use 'finance_xp'
-  const subTiers = useMemo(() => 
-    districts.filter(d => d.parent_slug === activeDistrict?.slug || d.parent_slug === 'finance'), 
-  [districts, activeDistrict]);
+  const subTiers = useMemo(() => districts.filter(d => d.parent_slug === 'finance'), [districts]);
   
   const isFinanceSector = activeDistrict?.slug.includes('finance');
-
   const hasHashtag = useMemo(() => /#\w+/.test(newMessage), [newMessage]);
   const currentReward = hasHashtag || activeHashtag ? 5 : 3;
 
@@ -45,6 +38,11 @@ export default function DashboardPage() {
     });
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
   }, [messages]);
+
+  const filteredMessages = useMemo(() => {
+    if (!activeHashtag) return messages;
+    return messages.filter(m => m.content.includes(activeHashtag));
+  }, [messages, activeHashtag]);
 
   // --- CORE LOGIC ---
   const loadNexus = async () => {
@@ -96,9 +94,14 @@ export default function DashboardPage() {
     e.preventDefault();
     if (!newMessage.trim() || !profile || !activeDistrict) return;
 
+    let finalContent = newMessage;
+    if (activeHashtag && !finalContent.includes(activeHashtag)) {
+      finalContent = `${finalContent} ${activeHashtag}`;
+    }
+
     const { error } = await supabase.rpc('submit_weighted_signal', {
       user_id: profile.id,
-      signal_content: newMessage,
+      signal_content: finalContent,
       target_hub: activeDistrict.slug,
       points_to_add: currentReward
     });
@@ -111,18 +114,22 @@ export default function DashboardPage() {
   };
 
   useEffect(() => { loadNexus(); }, []);
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [filteredMessages]);
 
-  if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center font-mono text-emerald-500 animate-pulse text-[10px]">SYNCING_RESOURCES...</div>;
+  if (loading || !profile) return (
+    <div className="h-screen bg-black flex items-center justify-center font-mono text-emerald-500 animate-pulse text-[10px] tracking-[0.5em]">
+      SYNCING_SYSTEM_RESOURCES
+    </div>
+  );
 
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
       
-      {/* GLOBAL NAVIGATION */}
+      {/* NAV BAR */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
-        <button onClick={() => setView('admin')} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 border border-emerald-500/20 bg-emerald-500/5' : 'hover:text-white'}`}>
+        <button onClick={() => setView('admin')} className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 border border-emerald-500/20 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'hover:text-white'}`}>
           <LayoutGrid size={16} />
-          <span className="text-xs font-black uppercase tracking-widest">Dashboard</span>
+          <span className="text-xs font-black uppercase tracking-widest text-shadow-glow">Dashboard</span>
         </button>
 
         <div className="w-[1px] h-6 bg-white/10" />
@@ -135,11 +142,10 @@ export default function DashboardPage() {
             </button>
           )}
 
-          {/* Hubs unlocked by Global Signal Score */}
           {mainHubs.map(n => {
             const isLocked = profile.signal_score < n.min_score;
             return (
-              <button key={n.slug} disabled={isLocked} onClick={() => enterRoom(n)} className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all ${isLocked ? 'text-zinc-800' : 'text-zinc-600 hover:text-white'} ${activeDistrict?.slug === n.slug ? 'text-emerald-400' : ''}`}>
+              <button key={n.slug} disabled={isLocked} onClick={() => enterRoom(n)} className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all ${isLocked ? 'text-zinc-800 cursor-not-allowed' : 'text-zinc-600 hover:text-white'} ${activeDistrict?.slug === n.slug && view === 'chat' ? 'text-emerald-400' : ''}`}>
                 {isLocked && <Lock size={10} />} {n.name}
               </button>
             );
@@ -152,42 +158,45 @@ export default function DashboardPage() {
         </div>
       </nav>
 
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1 overflow-hidden bg-[#020202]">
         {view === 'admin' ? (
-          <div className="h-full max-w-6xl mx-auto p-12 space-y-12">
+          /* --- DASHBOARD (KEPT ORIGINAL) --- */
+          <div className="h-full overflow-y-auto max-w-6xl mx-auto p-12 space-y-12">
             <header className="border-b border-white/5 pb-10">
               <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em]">Node_Operator</p>
               <h2 className="text-4xl font-black text-white uppercase tracking-tighter">{profile.username}</h2>
             </header>
-            <div className="grid grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="p-8 bg-zinc-900/30 border border-white/5">
                 <Wallet className="text-emerald-500 mb-6" size={28} />
                 <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Spendable_Signal</p>
-                <p className="text-4xl font-black text-white tabular-nums">{profile.signal_to_spend || 0}</p>
+                <p className="text-4xl font-black text-white tabular-nums tracking-tighter">{profile.signal_to_spend || 0}</p>
               </div>
               <div className="p-8 bg-zinc-900/30 border border-white/5">
                 <BarChart3 className="text-blue-500 mb-6" size={28} />
                 <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Global_Score</p>
-                <p className="text-4xl font-black text-white tabular-nums">{profile.signal_score || 0}</p>
+                <p className="text-4xl font-black text-white tabular-nums tracking-tighter">{profile.signal_score || 0}</p>
               </div>
               <div className="p-8 bg-zinc-900/30 border border-white/5">
                 <Activity className="text-purple-500 mb-6" size={28} />
-                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Sector_XP (Finance)</p>
-                <p className="text-4xl font-black text-white tabular-nums">{profile.finance_xp || 0}</p>
+                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Finance_XP</p>
+                <p className="text-4xl font-black text-white tabular-nums tracking-tighter">{profile.finance_xp || 0}</p>
               </div>
             </div>
           </div>
         ) : (
-          <div className="h-full flex relative">
-            {/* SECTOR SIDEBAR (Tiers unlocked by Finance XP) */}
+          /* --- CHAT INTERFACE --- */
+          <div className={`h-full flex relative animate-in slide-in-from-bottom duration-500`}>
+            
+            {/* SECTOR SIDEBAR (Locked by Finance XP) */}
             {isFinanceSector && (
-              <aside className="w-52 border-r border-white/5 bg-black flex flex-col p-4 gap-4">
+              <aside className="w-52 border-r border-white/5 bg-black flex flex-col p-4 gap-4 animate-in slide-in-from-left">
                 <div className="flex flex-col gap-1 mb-2">
                   <div className="flex items-center gap-2 text-emerald-500">
                     <Layers size={14} />
-                    <span className="text-[9px] font-black uppercase tracking-tighter">Sector_Tiers</span>
+                    <span className="text-[9px] font-black uppercase tracking-tighter">Finance_Tiers</span>
                   </div>
-                  <p className="text-[8px] text-zinc-600 font-bold uppercase tracking-widest">Local_XP: {profile.finance_xp || 0}</p>
+                  <p className="text-[8px] text-zinc-600 font-bold uppercase tracking-widest">XP_Level: {profile.finance_xp || 0}</p>
                 </div>
                 
                 <div className="flex flex-col gap-2">
@@ -195,13 +204,13 @@ export default function DashboardPage() {
                     const isLocked = (profile.finance_xp || 0) < tier.min_score;
                     const progress = Math.min(100, ((profile.finance_xp || 0) / tier.min_score) * 100);
                     return (
-                      <button key={tier.slug} disabled={isLocked} onClick={() => enterRoom(tier)} className={`text-left p-3 rounded border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400' : isLocked ? 'border-zinc-900 text-zinc-800' : 'border-white/5 text-zinc-600 hover:text-white'}`}>
+                      <button key={tier.slug} disabled={isLocked} onClick={() => enterRoom(tier)} className={`text-left p-3 rounded border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400 shadow-[inset_0_0_10px_rgba(16,185,129,0.05)]' : isLocked ? 'border-zinc-900 text-zinc-800' : 'border-white/5 text-zinc-600 hover:text-white'}`}>
                         <div className="flex justify-between items-center mb-1">
                           <span className="text-[9px] font-bold uppercase truncate">{tier.name}</span>
                           {isLocked && <Lock size={8} />}
                         </div>
                         <div className="h-1 w-full bg-zinc-900 rounded-full overflow-hidden">
-                          <div className="h-full bg-emerald-500 transition-all duration-1000" style={{ width: `${progress}%` }} />
+                          <div className={`h-full bg-emerald-500 transition-all duration-1000 ${isLocked ? 'opacity-20' : 'shadow-[0_0_8px_#10b981]'}`} style={{ width: `${progress}%` }} />
                         </div>
                       </button>
                     );
@@ -210,50 +219,83 @@ export default function DashboardPage() {
               </aside>
             )}
 
-            {/* CHAT AREA */}
-            <div className="flex-1 flex flex-col">
-              <div className="px-8 py-3 border-b border-white/5 bg-black/80 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {isFinanceSector ? <DollarSign size={14} className="text-emerald-500" /> : <Radio size={14} className="text-blue-500" />}
+            {/* MAIN CHAT - FIXED CENTERED MESSAGES */}
+            <div className="flex-1 flex flex-col relative bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:40px_40px]">
+              
+              <div className="px-8 py-3 border-b border-white/5 bg-black/80 backdrop-blur-md flex items-center justify-between z-10">
+                <div className="flex items-center gap-3">
+                  {isFinanceSector ? <DollarSign className="text-emerald-500 animate-pulse" size={14} /> : <Radio className="text-blue-400 animate-pulse" size={14} />}
                   <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">{activeDistrict.name}</span>
+                </div>
+                {activeHashtag && (
+                  <button onClick={() => setActiveHashtag(null)} className="text-[8px] flex items-center gap-1 text-zinc-500 hover:text-white uppercase font-black"><X size={10} /> Clear_Filter</button>
+                )}
+              </div>
+
+              <div className="flex-1 overflow-y-auto scrollbar-hide">
+                <div className="max-w-2xl mx-auto p-8 space-y-8">
+                  {filteredMessages.map((m) => (
+                    <div key={m.id} className="flex flex-col gap-1.5 animate-in fade-in">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-black uppercase ${isFinanceSector ? 'text-emerald-500/50' : 'text-white/50'}`}>{m.profiles?.username || 'ANON_UNIT'}</span>
+                        <span className="text-[8px] font-bold text-zinc-700 tabular-nums">[{m.profiles?.signal_score}]</span>
+                      </div>
+                      <div className={`bg-white/[0.02] border-l p-4 rounded-r-sm ${isFinanceSector ? 'border-emerald-500/20 bg-emerald-500/[0.01]' : 'border-white/10'}`}>
+                        <p className={`text-[15px] leading-relaxed font-medium ${isFinanceSector ? 'text-emerald-50/90 font-mono tracking-tight' : 'text-zinc-300'}`}>{m.content}</p>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={scrollRef} />
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-8 space-y-6">
-                {messages.map((m) => (
-                  <div key={m.id} className="flex flex-col gap-1 animate-in fade-in slide-in-from-left-2">
-                    <div className="flex items-center gap-2 opacity-50">
-                      <span className="text-[9px] font-black uppercase">{m.profiles?.username}</span>
-                      <span className="text-[7px] font-bold tabular-nums">[{m.profiles?.signal_score}]</span>
-                    </div>
-                    <div className="bg-white/[0.01] border-l border-white/5 p-4 rounded-r-sm hover:bg-white/[0.03] transition-colors">
-                      <p className="text-[14px] text-zinc-300 leading-relaxed">{m.content}</p>
-                    </div>
-                  </div>
-                ))}
-                <div ref={scrollRef} />
-              </div>
-
+              {/* INPUT AREA WITH REWARD INDICATORS */}
               <div className="p-8 border-t border-white/5 bg-black">
                 <form onSubmit={transmitSignal} className="max-w-2xl mx-auto">
-                  <div className="flex items-center bg-white/5 border border-white/10 rounded-sm overflow-hidden focus-within:border-emerald-500/50 transition-all">
-                    <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase placeholder:text-zinc-800" placeholder="TRANSMIT_DATA..." />
-                    <button type="submit" className="px-8 h-full bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black transition-all">Broadcast</button>
+                  <div className={`relative flex items-center bg-white/5 border rounded-sm transition-all overflow-hidden ${isFinanceSector ? 'border-emerald-500/20 focus-within:border-emerald-500' : 'border-white/10 focus-within:border-emerald-500/50'}`}>
+                    <div className="pl-4 text-zinc-700">{isFinanceSector ? <TrendingUp size={14} className="text-emerald-500" /> : <Zap size={14} />}</div>
+                    <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-5 text-xs text-white outline-none font-bold uppercase tracking-widest placeholder:text-zinc-800" placeholder={isFinanceSector ? "EXECUTE_TRADE_SIGNAL..." : "TRANSMIT_SIGNAL..."} />
+                    <button type="submit" className={`px-8 border-l font-black text-xs uppercase transition-all ${isFinanceSector ? 'bg-emerald-600 text-black border-emerald-500 hover:bg-white' : 'bg-zinc-900 border-white/10 text-emerald-500 hover:bg-emerald-500 hover:text-black'}`}>Broadcast</button>
+                  </div>
+                  
+                  {/* RESTORED REWARD STATUS UNDER INPUT */}
+                  <div className="flex justify-between mt-2 px-1">
+                    <p className={`text-[8px] uppercase font-black transition-all duration-300 ${currentReward === 5 ? 'text-emerald-400 animate-pulse' : 'text-zinc-700'}`}>
+                      {currentReward === 5 ? '>>> HIGH_VALUE_SIGNAL_DETECTED' : '>>> STANDARD_SIGNAL_PROTOCOL'}
+                    </p>
+                    <p className="text-[8px] text-zinc-500 uppercase font-bold">
+                      Potential_Yield: <span className={currentReward === 5 ? 'text-emerald-500' : 'text-zinc-400'}>{currentReward} SP</span>
+                    </p>
                   </div>
                 </form>
               </div>
             </div>
 
-            {/* TRENDING BAR */}
-            <aside className="w-64 bg-black border-l border-white/5 p-6 space-y-6">
-              <div className="flex items-center gap-2 text-zinc-500"><Hash size={14} /><h3 className="text-[10px] font-black uppercase tracking-widest">Trending</h3></div>
-              <div className="space-y-2">
-                {trendingTags.map(([tag, count]) => (
-                  <div key={tag} className="flex justify-between items-center p-2 bg-white/5 rounded-sm border border-white/5">
-                    <span className="text-[9px] font-bold text-zinc-400">{tag}</span>
-                    <span className="text-[8px] font-black opacity-30">{count}</span>
+            {/* SIDEBAR WITH RESTORED YIELD INFO BOTTOM RIGHT */}
+            <aside className="w-80 bg-black border-l border-white/5 p-6 flex flex-col gap-8">
+              <div className="space-y-4">
+                <div className={`flex items-center gap-2 ${isFinanceSector ? 'text-emerald-500' : 'text-blue-500'}`}><Hash size={16} /><h3 className="text-[11px] font-black uppercase tracking-widest">Trending_Signals</h3></div>
+                <div className="space-y-2 overflow-y-auto max-h-[60vh] scrollbar-hide">
+                  {trendingTags.map(([tag, count]) => (
+                    <button key={tag} onClick={() => setActiveHashtag(tag)} className={`w-full flex justify-between items-center p-3 rounded-sm border transition-all ${activeHashtag === tag ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-500' : 'bg-white/5 border-white/5 text-zinc-500 hover:border-white/20'}`}>
+                      <span className="text-[10px] font-bold tracking-widest">{tag}</span>
+                      <span className="text-[8px] font-black opacity-30 tabular-nums">{count}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* RESTORED YIELD PROTOCOL INFO BOX */}
+              <div className={`mt-auto p-4 border rounded ${isFinanceSector ? 'border-emerald-500/20 bg-emerald-500/[0.02]' : 'border-blue-500/20 bg-blue-500/[0.02]'}`}>
+                <p className={`text-[9px] font-black uppercase mb-2 ${isFinanceSector ? 'text-emerald-400' : 'text-blue-400'}`}>Mining_Protocol</p>
+                <div className="space-y-1 text-[9px] uppercase font-bold">
+                  <div className="flex justify-between"><span className="text-zinc-500">Generic Chat</span><span className="text-zinc-300">3 SP</span></div>
+                  <div className="flex justify-between"><span className="text-emerald-500">Hashtag Tagged</span><span className="text-emerald-500">5 SP</span></div>
+                  <div className="mt-2 pt-2 border-t border-white/5 flex justify-between items-center opacity-50 italic">
+                    <span className="text-[8px]">Sector Routing:</span>
+                    <span className="text-[8px]">{isFinanceSector ? "FINANCE_XP" : "GLOBAL_SIGNAL"}</span>
                   </div>
-                ))}
+                </div>
               </div>
             </aside>
           </div>
