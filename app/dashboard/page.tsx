@@ -17,7 +17,7 @@ export default function DashboardPage() {
   const [view, setView] = useState<'admin' | 'chat' | 'leaderboard'>('admin');
   const [loading, setLoading] = useState(true);
   
-  // Separate states for the 3 announcement levels
+  // Announcement states
   const [globalBroadcast, setGlobalBroadcast] = useState<any>(null);
   const [districtBroadcast, setDistrictBroadcast] = useState<any>(null);
   const [tierBroadcast, setTierBroadcast] = useState<any>(null);
@@ -38,14 +38,9 @@ export default function DashboardPage() {
       .order('created_at', { ascending: false });
 
     if (data) {
-      // 1. Set Global (Always shows if exists)
       setGlobalBroadcast(data.find(b => b.scope === 'global') || null);
-
-      // 2. Set District (Filtered by the current district user is in)
       const currentDistrictSlug = activeDistrict?.parent_slug || activeDistrict?.slug;
       setDistrictBroadcast(data.find(b => b.scope === 'district' && b.target_slug === currentDistrictSlug) || null);
-
-      // 3. Set Tier (Pinned only to the specific room)
       setTierBroadcast(data.find(b => b.scope === 'tier' && b.target_slug === activeDistrict?.slug) || null);
     }
   };
@@ -119,18 +114,18 @@ export default function DashboardPage() {
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
       
-      {/* 1. GLOBAL ANNOUNCEMENT (TOP OF SCREEN) */}
+      {/* GLOBAL SLOT */}
       {globalBroadcast && (
-        <div className="h-8 bg-emerald-600 text-white flex items-center px-6 gap-4 shrink-0 z-[100] shadow-lg">
+        <div className="h-8 bg-emerald-600 text-white flex items-center px-6 gap-4 shrink-0 z-[100]">
           <Megaphone size={12} className="animate-pulse" />
-          <span className="text-[9px] font-black uppercase tracking-[0.2em]">Global_Signal:</span>
+          <span className="text-[9px] font-black uppercase tracking-widest">Global_Signal:</span>
           <span className="text-[10px] font-bold truncate flex-1">
              {globalBroadcast.content} — <span className="opacity-70">@{globalBroadcast.profiles?.username}</span>
           </span>
         </div>
       )}
 
-      {/* NAV */}
+      {/* DASHBOARD NAV */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50 shrink-0">
         <button onClick={() => {setView('admin'); setStoreTarget(null);}} className={`flex items-center justify-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 bg-emerald-500/5' : 'hover:text-white'}`}>
           <LayoutGrid size={16} /> <span className="text-xs font-black uppercase tracking-widest text-white">Dashboard</span>
@@ -150,10 +145,10 @@ export default function DashboardPage() {
 
       <main className="flex-1 overflow-hidden">
         {view === 'admin' ? (
-          /* ADMIN DASHBOARD */
+          /* DASHBOARD MAIN CONTENT */
           <div className="h-full max-w-6xl mx-auto p-12 space-y-12 overflow-y-auto">
              <header className="border-b border-white/5 pb-8">
-                <h2 className="text-4xl font-black text-white uppercase tracking-tighter">Nexus_Store</h2>
+                <h2 className="text-4xl font-black text-white uppercase tracking-tighter">{profile.username}</h2>
                 <p className="text-[10px] text-zinc-500 mt-2">Convert Vault Signal into Network Authority.</p>
              </header>
 
@@ -163,24 +158,21 @@ export default function DashboardPage() {
                   <button onClick={() => setStoreTarget({scope: 'tier', id: '', name: ''})} className="p-8 border border-white/5 bg-zinc-900/20 text-left hover:border-emerald-500/40 transition-all group">
                     <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">Local_Tier_Pin</p>
                     <p className="text-2xl font-black text-white">-100</p>
-                    <p className="text-[9px] text-zinc-600 mt-4 uppercase">Pins message to top of specific room</p>
                   </button>
                   <button onClick={() => setStoreTarget({scope: 'district', id: '', name: ''})} className="p-8 border border-white/5 bg-zinc-900/20 text-left hover:border-blue-500/40 transition-all group">
                     <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">District_Pulse</p>
                     <p className="text-2xl font-black text-white">-500</p>
-                    <p className="text-[9px] text-zinc-600 mt-4 uppercase">Shows above all rooms in a district</p>
                   </button>
                   <button onClick={() => executePurchase('global', 2000, null)} className="p-8 border border-emerald-500/20 bg-emerald-500/5 text-left hover:bg-emerald-500/10 transition-all group">
                     <p className="text-[10px] font-black text-emerald-500 uppercase mb-2">Global_Broadcast</p>
                     <p className="text-2xl font-black text-white">-2,000</p>
-                    <p className="text-[9px] text-emerald-600/80 mt-4 uppercase">Shows at the top of the entire app</p>
                   </button>
                 </div>
               ) : (
                 <div className="bg-zinc-900/50 border border-emerald-500/20 p-8">
                    <div className="flex justify-between items-center mb-6">
                       <p className="text-xs font-black text-white uppercase">Select Target for {storeTarget.scope}</p>
-                      <button onClick={() => setStoreTarget(null)} className="text-[10px] text-zinc-500 uppercase font-black">Cancel</button>
+                      <button onClick={() => setStoreTarget(null)} className="text-[10px] text-zinc-500 uppercase font-black underline">Cancel</button>
                    </div>
                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       {districts.filter(d => storeTarget.scope === 'district' ? !d.parent_slug : d.parent_slug).map(d => (
@@ -192,21 +184,31 @@ export default function DashboardPage() {
                 </div>
               )}
              </section>
+
+             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-10 border-t border-white/5">
+                <div className="p-8 bg-zinc-900/30 border border-white/5 text-center">
+                  <p className="text-[10px] text-zinc-500 font-bold uppercase mb-2">Weekly_Pot</p>
+                  <p className="text-4xl font-black text-white">{profile.signal_to_spend || 0}</p>
+                </div>
+                <div className="p-8 bg-black border border-emerald-500/20 text-center">
+                  <p className="text-[10px] text-emerald-500/50 font-bold uppercase mb-2">Vault_Total</p>
+                  <p className="text-4xl font-black text-white">{profile.vault_signal || 0}</p>
+                </div>
+             </div>
           </div>
         ) : (
-          /* CHAT VIEW */
+          /* CHAT INTERFACE */
           <div className="h-full flex relative">
             
             {/* DISTRICT SIDEBAR */}
             {isFinanceSector && (
               <aside className="w-64 border-r border-white/5 bg-black flex flex-col overflow-hidden">
-                {/* 2. DISTRICT ANNOUNCEMENT (NEXT TO DISTRICT TITLE) */}
+                {/* DISTRICT SLOT */}
                 <div className="p-4 bg-zinc-900/50 border-b border-white/5">
                   <p className="text-[9px] font-black text-zinc-500 uppercase mb-2 tracking-widest">Finance_District</p>
                   {districtBroadcast && (
                     <div className="p-3 bg-blue-600/10 border border-blue-500/30 rounded">
                        <p className="text-[10px] text-blue-400 font-bold leading-tight">{districtBroadcast.content}</p>
-                       <p className="text-[7px] text-blue-500/50 mt-1 uppercase font-black">— {districtBroadcast.profiles?.username}</p>
                     </div>
                   )}
                 </div>
@@ -221,7 +223,7 @@ export default function DashboardPage() {
               </aside>
             )}
             
-            {/* CHAT AREA */}
+            {/* CHAT MAIN */}
             <div className="flex-1 flex flex-col bg-black relative">
               <div className="px-8 py-3 border-b border-white/5 flex justify-between items-center bg-black/50 backdrop-blur-md z-10">
                 <span className="text-[11px] font-black text-white uppercase tracking-[0.3em] flex items-center gap-2">
@@ -230,13 +232,13 @@ export default function DashboardPage() {
                 <button onClick={() => setView('admin')} className="text-[9px] text-zinc-600 font-black hover:text-white uppercase">Exit_Room</button>
               </div>
 
-              {/* 3. TIER ANNOUNCEMENT (PINNED TO TOP OF CHAT) */}
+              {/* TIER SLOT (PINNED MESSAGE) */}
               {tierBroadcast && (
-                <div className="mx-8 mt-4 p-4 bg-zinc-900/80 border border-white/10 flex items-start gap-4 animate-in slide-in-from-top-2 duration-300">
+                <div className="mx-8 mt-4 p-4 bg-zinc-900/80 border border-white/10 flex items-start gap-4">
                   <Pin size={14} className="text-emerald-500 shrink-0 mt-1 rotate-45" />
                   <div>
                     <p className="text-xs text-zinc-200 font-bold leading-relaxed">{tierBroadcast.content}</p>
-                    <p className="text-[8px] text-emerald-500/50 mt-1 font-black uppercase">Channel_Priority_Msg by {tierBroadcast.profiles?.username}</p>
+                    <p className="text-[8px] text-emerald-500/50 mt-1 font-black uppercase">Pinned by {tierBroadcast.profiles?.username}</p>
                   </div>
                 </div>
               )}
@@ -244,7 +246,7 @@ export default function DashboardPage() {
               <div className="flex-1 overflow-y-auto p-8 space-y-6">
                 {messages.map((m) => (
                   <div key={m.id} className="group">
-                    <p className="text-[10px] font-black text-zinc-600 uppercase mb-1">{m.profiles?.username} <span className="opacity-0 group-hover:opacity-100 transition-all ml-2 text-zinc-800">{new Date(m.created_at).toLocaleTimeString()}</span></p>
+                    <p className="text-[10px] font-black text-zinc-600 uppercase mb-1">{m.profiles?.username}</p>
                     <p className="text-zinc-300 text-sm border-l border-white/5 pl-4">{m.content}</p>
                   </div>
                 ))}
@@ -252,8 +254,8 @@ export default function DashboardPage() {
               </div>
 
               <div className="p-8 border-t border-white/5 bg-black">
-                <form onSubmit={transmitSignal} className="max-w-3xl mx-auto flex bg-white/5 border border-white/10 focus-within:border-emerald-500/50 transition-all">
-                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase placeholder:text-zinc-800" placeholder="ENTER_TRANSMISSION..." />
+                <form onSubmit={transmitSignal} className="max-w-3xl mx-auto flex bg-white/5 border border-white/10">
+                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase" placeholder="ENTER_TRANSMISSION..." />
                   <button type="submit" className="px-10 bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black transition-all">Send</button>
                 </form>
               </div>
