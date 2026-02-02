@@ -17,10 +17,8 @@ export default function DashboardPage() {
   const [view, setView] = useState<'admin' | 'chat' | 'leaderboard'>('admin');
   const [loading, setLoading] = useState(true);
   
-  // State for filtering (The Tuner)
+  // Tuner & Signal State
   const [signalFilter, setSignalFilter] = useState<string | null>(null);
-  
-  // Announcement States
   const [globalBroadcast, setGlobalBroadcast] = useState<any>(null);
   const [districtBroadcast, setDistrictBroadcast] = useState<any>(null);
   const [tierBroadcast, setTierBroadcast] = useState<any>(null);
@@ -29,7 +27,7 @@ export default function DashboardPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const channelRef = useRef<any>(null);
 
-  // --- LOGIC GATING ---
+  // --- LOGIC GATING & CALCULATIONS ---
   const isFinanceSector = useMemo(() => activeDistrict?.slug === 'finance' || activeDistrict?.slug?.startsWith('finance-'), [activeDistrict]);
   const subTiers = useMemo(() => districts.filter(d => d.parent_slug === 'finance'), [districts]);
   const isBoosted = useMemo(() => newMessage.includes("#") || signalFilter, [newMessage, signalFilter]);
@@ -58,7 +56,7 @@ export default function DashboardPage() {
     return tier2 ? (profile?.finance_xp || 0) >= tier2.min_score : false;
   }, [profile, subTiers]);
 
-  // --- DATA FETCHING ---
+  // --- CORE FUNCTIONS ---
   const loadNexus = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return router.replace("/");
@@ -175,7 +173,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* HEADER NAV */}
+      {/* HEADER NAVIGATION */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 justify-between z-50 shrink-0">
         <div className="flex items-center gap-8">
           <button onClick={() => {setView('admin'); setStoreTarget(null);}} className={`flex items-center justify-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 bg-emerald-500/5' : 'hover:text-white'}`}>
@@ -201,101 +199,103 @@ export default function DashboardPage() {
           <div className="h-full max-w-6xl mx-auto p-12 overflow-y-auto space-y-12">
              <header className="border-b border-white/5 pb-8">
                 <h2 className="text-4xl font-black text-white uppercase">{profile.username}</h2>
-                <div className="flex gap-4 mt-4">
-                  <div className="px-4 py-2 bg-zinc-900 border border-white/5 rounded">
-                    <p className="text-[8px] text-zinc-500 uppercase font-black tracking-[0.2em]">Vault_Signal</p>
-                    <p className="text-xl font-black text-emerald-500">{profile.vault_signal?.toLocaleString()}</p>
-                  </div>
+                <div className="px-4 py-2 bg-zinc-900 border border-white/5 rounded inline-block mt-4">
+                  <p className="text-[8px] text-zinc-500 uppercase font-black tracking-[0.2em]">Vault_Signal</p>
+                  <p className="text-xl font-black text-emerald-500">{profile.vault_signal?.toLocaleString()}</p>
                 </div>
              </header>
 
+             {/* FULL SHOP INTERFACE RESTORED */}
              <section className="space-y-6">
-              {!storeTarget ? (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <button onClick={() => setStoreTarget({scope: 'tier', id: '', name: ''})} className="p-8 border border-white/5 bg-zinc-900/20 text-left hover:border-emerald-500/40 group">
-                    <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">Tier_Ping</p>
-                    <p className="text-2xl font-black text-white group-hover:text-emerald-500 transition-colors">-100</p>
-                  </button>
-
-                  <button disabled={!canBroadcastDistrict} onClick={() => setStoreTarget({scope: 'district', id: '', name: ''})} className={`p-8 border text-left transition-all ${canBroadcastDistrict ? 'border-white/5 bg-zinc-900/20 hover:border-blue-500/40' : 'opacity-20 grayscale cursor-not-allowed'}`}>
-                    <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">District_Pulse</p>
-                    <p className="text-2xl font-black text-white">-500</p>
-                  </button>
-
-                  <button disabled={!canBroadcastGlobal} onClick={() => executePurchase('global', 2000, null)} className={`p-8 border text-left transition-all ${canBroadcastGlobal ? 'border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10' : 'opacity-20 grayscale cursor-not-allowed'}`}>
-                    <p className="text-[10px] font-black text-emerald-500 uppercase mb-2">Global_Broadcast</p>
-                    <p className="text-2xl font-black text-white">-2,000</p>
-                  </button>
-                </div>
-              ) : (
-                <div className="bg-zinc-900/50 border border-emerald-500/20 p-8 rounded">
-                   <div className="flex justify-between items-center mb-6">
-                      <p className="text-xs font-black text-white uppercase tracking-widest">Select Target Sector: {storeTarget.scope}</p>
-                      <button onClick={() => setStoreTarget(null)} className="text-[10px] text-zinc-500 uppercase font-black underline">Abort_Selection</button>
-                   </div>
-                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      {districts
-                        .filter(d => (storeTarget.scope === 'district' ? !d.parent_slug : d.parent_slug) && d.slug !== 'lobby')
-                        .map(d => {
-                          const hasUnlocked = (profile.finance_xp || 0) >= d.min_score;
-                          return (
-                            <button 
-                              key={d.slug} 
-                              disabled={!hasUnlocked}
-                              onClick={() => executePurchase(storeTarget.scope, storeTarget.scope === 'district' ? 500 : 100, d.slug)} 
-                              className={`p-4 border text-[10px] font-black uppercase transition-all ${hasUnlocked ? 'border-white/10 bg-black hover:border-white/30 text-zinc-400' : 'border-red-900/10 text-zinc-800'}`}
-                            >
-                              {d.name}
-                            </button>
-                          );
-                        })}
-                   </div>
-                </div>
-              )}
+                {!storeTarget ? (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <button onClick={() => setStoreTarget({scope: 'tier', id: '', name: ''})} className="p-8 border border-white/5 bg-zinc-900/20 text-left hover:border-emerald-500/40 group">
+                      <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">Tier_Ping</p>
+                      <p className="text-2xl font-black text-white group-hover:text-emerald-500">-100</p>
+                    </button>
+                    <button disabled={!canBroadcastDistrict} onClick={() => setStoreTarget({scope: 'district', id: '', name: ''})} className={`p-8 border text-left ${canBroadcastDistrict ? 'border-white/5 bg-zinc-900/20 hover:border-blue-500/40' : 'opacity-20 cursor-not-allowed'}`}>
+                      <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">District_Pulse</p>
+                      <p className="text-2xl font-black text-white">-500</p>
+                    </button>
+                    <button disabled={!canBroadcastGlobal} onClick={() => executePurchase('global', 2000, null)} className={`p-8 border text-left ${canBroadcastGlobal ? 'border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10' : 'opacity-20 cursor-not-allowed'}`}>
+                      <p className="text-[10px] font-black text-emerald-500 uppercase mb-2">Global_Broadcast</p>
+                      <p className="text-2xl font-black text-white">-2,000</p>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bg-zinc-900/50 border border-emerald-500/20 p-8 rounded">
+                     <div className="flex justify-between items-center mb-6">
+                        <p className="text-xs font-black text-white uppercase tracking-widest">Select Target Sector: {storeTarget.scope}</p>
+                        <button onClick={() => setStoreTarget(null)} className="text-[10px] text-zinc-500 uppercase font-black underline">Abort</button>
+                     </div>
+                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        {districts.filter(d => (storeTarget.scope === 'district' ? !d.parent_slug : d.parent_slug) && d.slug !== 'lobby').map(d => (
+                          <button key={d.slug} onClick={() => executePurchase(storeTarget.scope, storeTarget.scope === 'district' ? 500 : 100, d.slug)} className="p-4 border border-white/10 bg-black text-[10px] font-black uppercase text-zinc-400 hover:border-white/30">{d.name}</button>
+                        ))}
+                     </div>
+                  </div>
+                )}
              </section>
           </div>
         ) : (
           <div className="h-full flex relative">
-            {/* TIERS SIDEBAR */}
+            
+            {/* DISTRICT TIERS WITH PROGRESS WHEELS */}
             {isFinanceSector && (
               <aside className="w-64 border-r border-white/5 bg-black flex flex-col shrink-0">
                 <div className="p-4 border-b border-white/5 bg-zinc-900/30 text-[10px] font-black text-zinc-500 uppercase tracking-widest">District_Tiers</div>
-                <div className="flex-1 p-4 space-y-2 overflow-y-auto">
-                  {subTiers.map(tier => (
-                    <button key={tier.slug} disabled={profile.finance_xp < tier.min_score} onClick={() => enterRoom(tier)} className={`w-full text-left p-3 border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/50 bg-emerald-500/5 text-emerald-400' : 'border-white/5 text-zinc-600 hover:text-white'}`}>
-                      <p className="text-[10px] font-black uppercase">{tier.name}</p>
-                    </button>
-                  ))}
+                <div className="flex-1 p-4 space-y-3 overflow-y-auto">
+                  {subTiers.map(tier => {
+                    const isLocked = profile.finance_xp < tier.min_score;
+                    const progress = Math.min(100, Math.round((profile.finance_xp / tier.min_score) * 100));
+                    const circumference = 2 * Math.PI * 12;
+                    const strokeDashoffset = circumference - (progress / 100) * circumference;
+
+                    return (
+                      <button key={tier.slug} disabled={isLocked} onClick={() => enterRoom(tier)} className={`w-full relative flex items-center gap-4 p-3 border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/50 bg-emerald-500/5 text-emerald-400' : isLocked ? 'border-white/5 opacity-40' : 'border-white/5 text-zinc-600 hover:text-white'}`}>
+                        <div className="relative w-8 h-8 shrink-0 flex items-center justify-center">
+                          <svg className="w-full h-full -rotate-90">
+                            <circle cx="16" cy="16" r="12" stroke="currentColor" strokeWidth="2" fill="transparent" className="text-white/5" />
+                            <circle cx="16" cy="16" r="12" stroke="currentColor" strokeWidth="2" fill="transparent" strokeDasharray={circumference} style={{ strokeDashoffset }} className={isLocked ? "text-zinc-700" : "text-emerald-500"} />
+                          </svg>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            {isLocked ? <Lock size={10} /> : <Zap size={10} />}
+                          </div>
+                        </div>
+                        <div className="text-left">
+                          <p className="text-[10px] font-black uppercase truncate">{tier.name}</p>
+                          {isLocked && <p className="text-[8px] font-bold text-zinc-500 uppercase">{progress}% (Target: {tier.min_score})</p>}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </aside>
             )}
             
-            {/* CHAT AREA */}
+            {/* CHAT INTERFACE */}
             <div className="flex-1 flex flex-col bg-black relative">
               <div className="px-8 py-3 border-b border-white/5 flex justify-between items-center bg-black/50 z-10">
                 <span className="text-[11px] font-black text-white uppercase tracking-[0.3em] flex items-center gap-2">
                   <Hash size={12} className="text-emerald-500" /> {activeDistrict?.name}
                 </span>
-                <div className="flex items-center gap-4">
-                  {signalFilter && (
-                    <button onClick={() => setSignalFilter(null)} className="flex items-center gap-2 px-3 py-1 border border-red-500/40 text-red-500 text-[9px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
-                      <FilterX size={12} /> CLEAR_FILTER
-                    </button>
-                  )}
-                  <button onClick={() => setView('admin')} className="text-[9px] text-zinc-600 font-black hover:text-white uppercase ml-4">Exit_Room</button>
-                </div>
+                {signalFilter && (
+                  <button onClick={() => setSignalFilter(null)} className="flex items-center gap-2 px-3 py-1 border border-red-500/40 text-red-500 text-[9px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
+                    <FilterX size={12} /> CLEAR_FILTER
+                  </button>
+                )}
               </div>
 
               {tierBroadcast && (
-                <div className="mx-8 mt-4 p-4 bg-zinc-900/80 border border-white/10 flex items-start gap-4 shadow-xl">
-                  <Pin size={14} className="text-emerald-500 mt-1 rotate-45 shrink-0" />
+                <div className="mx-8 mt-4 p-4 bg-zinc-900/80 border border-white/10 flex items-start gap-4">
+                  <Pin size={14} className="text-emerald-500 mt-1 rotate-45" />
                   <p className="text-xs text-zinc-200 font-bold leading-relaxed">{tierBroadcast.content}</p>
                 </div>
               )}
 
               <div className="flex-1 overflow-y-auto p-8 space-y-6">
                 {filteredMessages.map((m) => (
-                  <div key={m.id} className="group border-l border-white/5 pl-4 hover:border-emerald-500/30 transition-all">
+                  <div key={m.id} className="group border-l border-white/5 pl-4 hover:border-emerald-500/30">
                     <p className="text-[10px] font-black text-zinc-600 uppercase mb-1">{m.profiles?.username}</p>
                     <p className="text-zinc-300 text-sm leading-relaxed">{m.content}</p>
                   </div>
@@ -303,12 +303,12 @@ export default function DashboardPage() {
                 <div ref={scrollRef} />
               </div>
 
+              {/* SIGNAL TRANSMISSION AREA */}
               <div className="p-8 border-t border-white/5 bg-black flex flex-col items-center">
-                <form onSubmit={transmitSignal} className="w-full max-w-3xl flex bg-white/5 border border-white/10 mb-3 shadow-inner">
+                <form onSubmit={transmitSignal} className="w-full max-w-3xl flex bg-white/5 border border-white/10 mb-3">
                   <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase tracking-wider" placeholder="TRANSMIT_SIGNAL..." />
-                  <button type="submit" className="px-10 bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black transition-all">Broadcast</button>
+                  <button type="submit" className="px-10 bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black transition-all">Send</button>
                 </form>
-                
                 <div className={`text-[10px] font-black uppercase transition-all duration-500 ${isBoosted ? 'text-emerald-500 animate-pulse' : 'text-zinc-500'}`}>
                   Transmission Worth {isBoosted ? '5' : '3'} Signal {signalFilter && `(Tuned to ${signalFilter})`}
                 </div>
@@ -318,30 +318,17 @@ export default function DashboardPage() {
             {/* TUNER SIDEBAR */}
             <aside className="w-64 border-l border-white/5 bg-black flex flex-col shrink-0">
                <div className="p-4 bg-zinc-900/50 border-b border-white/5 min-h-[100px]">
-                  <p className="text-[9px] font-black text-zinc-500 uppercase mb-3 flex items-center gap-2 tracking-widest">
-                    <Radio size={12} className="text-blue-500" /> District_Pulse
-                  </p>
-                  {districtBroadcast ? (
-                    <div className="p-3 bg-blue-600/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-bold leading-tight">
-                       {districtBroadcast.content}
-                    </div>
-                  ) : (
-                    <p className="text-[8px] text-zinc-700 italic">No active district signal...</p>
+                  <p className="text-[9px] font-black text-zinc-500 uppercase mb-3 flex items-center gap-2"><Radio size={12} className="text-blue-500" /> District_Pulse</p>
+                  {districtBroadcast && (
+                    <div className="p-3 bg-blue-600/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-bold leading-tight">{districtBroadcast.content}</div>
                   )}
                </div>
                <div className="p-6 space-y-6">
-                  <div className="flex items-center gap-2 text-zinc-500">
-                    <TrendingUp size={14} />
-                    <p className="text-[10px] font-black uppercase tracking-widest">Frequencies</p>
-                  </div>
+                  <p className="text-[10px] font-black uppercase text-zinc-500 tracking-widest flex items-center gap-2"><TrendingUp size={14}/> Frequencies</p>
                   <div className="space-y-4">
                     {trendingTags.map(([tag, count]) => (
-                      <div 
-                        key={tag} 
-                        onClick={() => setSignalFilter(tag === signalFilter ? null : tag)}
-                        className={`flex justify-between items-center group cursor-pointer p-2 rounded transition-all ${signalFilter === tag ? 'bg-emerald-500/10 border border-emerald-500/20' : 'hover:bg-white/5'}`}
-                      >
-                        <p className={`text-[11px] font-black uppercase ${signalFilter === tag ? 'text-emerald-500' : 'text-white group-hover:text-emerald-500'}`}>{tag}</p>
+                      <div key={tag} onClick={() => setSignalFilter(tag === signalFilter ? null : tag)} className={`flex justify-between items-center group cursor-pointer p-2 rounded transition-all ${signalFilter === tag ? 'bg-emerald-500/10 border border-emerald-500/20' : 'hover:bg-white/5'}`}>
+                        <p className={`text-[11px] font-black uppercase ${signalFilter === tag ? 'text-emerald-500' : 'text-white'}`}>{tag}</p>
                         <p className="text-[9px] font-black text-zinc-700">{count}</p>
                       </div>
                     ))}
