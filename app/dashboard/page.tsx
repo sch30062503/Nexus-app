@@ -22,14 +22,12 @@ export default function DashboardPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const channelRef = useRef<any>(null);
 
-  // --- DERIVED DATA ---
   const isFinanceSector = useMemo(() => activeDistrict?.slug === 'finance' || activeDistrict?.slug?.startsWith('finance-'), [activeDistrict]);
   const subTiers = useMemo(() => districts.filter(d => d.parent_slug === 'finance'), [districts]);
   const hasHighYieldTag = useMemo(() => /#\w+/.test(newMessage) || !!activeHashtag, [newMessage, activeHashtag]);
   const currentReward = hasHighYieldTag ? 5 : 3;
   const isDividendEligible = profile?.signal_to_spend >= 10000;
 
-  // --- BROADCAST FETCHING ---
   const loadBroadcasts = async () => {
     const { data } = await supabase
       .from('nexus_broadcasts')
@@ -38,22 +36,23 @@ export default function DashboardPage() {
       .order('created_at', { ascending: false });
 
     if (data && data.length > 0) {
-      // Prioritize Global -> District -> Tier based on current view
       const global = data.find(b => b.scope === 'global');
-      const district = data.find(b => b.scope === 'district' && b.target_slug === activeDistrict?.parent_slug);
+      const district = data.find(b => b.scope === 'district' && b.target_slug === (activeDistrict?.parent_slug || activeDistrict?.slug));
       const tier = data.find(b => b.scope === 'tier' && b.target_slug === activeDistrict?.slug);
-      
       setActiveBroadcast(global || district || tier || null);
     } else {
       setActiveBroadcast(null);
     }
   };
 
+  // CORRECTED ORDER: buyer_id, b_content, b_scope, b_target, price
   const buyBroadcast = async (scope: string, price: number) => {
+    if ((profile.vault_signal || 0) < price) return alert("Insufficient Vault Signal");
+    
     const content = prompt(`Enter your ${scope} announcement (Expires in 1hr):`);
     if (!content) return;
 
-    const target = scope === 'global' ? null : (scope === 'district' ? activeDistrict?.parent_slug || activeDistrict?.slug : activeDistrict?.slug);
+    const target = scope === 'global' ? null : (scope === 'district' ? (activeDistrict?.parent_slug || activeDistrict?.slug) : activeDistrict?.slug);
 
     const { error } = await supabase.rpc('purchase_broadcast', {
       buyer_id: profile.id,
@@ -63,8 +62,12 @@ export default function DashboardPage() {
       price: price
     });
 
-    if (error) alert(error.message);
-    else loadNexus();
+    if (error) {
+      console.error(error);
+      alert("Broadcast Failed: " + error.message);
+    } else {
+      loadNexus();
+    }
   };
 
   const loadNexus = async () => {
@@ -110,7 +113,7 @@ export default function DashboardPage() {
   };
 
   const triggerManualHarvest = async () => {
-    if (!confirm("Confirm Weekly Harvest? 10% of 10k+ pots will move to Vault.")) return;
+    if (!confirm("Confirm Weekly Harvest?")) return;
     const { error } = await supabase.rpc('weekly_nexus_harvest');
     if (!error) loadNexus();
   };
@@ -131,7 +134,7 @@ export default function DashboardPage() {
       
       {/* GLOBAL TICKER BAR */}
       {activeBroadcast && (
-        <div className={`h-8 flex items-center px-6 gap-4 animate-in slide-in-from-top duration-500 ${
+        <div className={`h-8 flex items-center px-6 gap-4 animate-in slide-in-from-top duration-500 shrink-0 ${
           activeBroadcast.scope === 'global' ? 'bg-emerald-600 text-white' : 
           activeBroadcast.scope === 'district' ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-emerald-400'
         }`}>
@@ -145,8 +148,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* NAV */}
-      <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50">
+      <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50 shrink-0">
         <button onClick={() => setView('admin')} className={`flex items-center justify-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 bg-emerald-500/5' : 'hover:text-white'}`}>
           <LayoutGrid size={16} /> <span className="text-xs font-black uppercase">Dashboard</span>
         </button>
@@ -178,12 +180,11 @@ export default function DashboardPage() {
                 <h2 className="text-4xl font-black text-white uppercase">{profile.username}</h2>
               </div>
               <div className="text-right border-l border-white/5 pl-8">
-                <p className="text-[9px] text-zinc-600 font-black uppercase">Permanent_Vault</p>
+                <p className="text-[9px] text-zinc-600 font-black uppercase">Vault_Signal</p>
                 <p className="text-xl font-black text-emerald-500">{profile.vault_signal?.toLocaleString()}</p>
               </div>
             </header>
 
-            {/* BROADCAST STORE */}
             <section className="space-y-6">
               <h3 className="text-xs font-black text-zinc-500 uppercase tracking-[0.3em]">Nexus_Broadcast_Store</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -203,14 +204,13 @@ export default function DashboardPage() {
               </div>
             </section>
 
-            {/* STATS */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-10 border-t border-white/5">
               <div className="p-8 bg-zinc-900/30 border border-white/5 text-center flex flex-col items-center">
                 <Wallet className="text-emerald-500 mb-6" size={24} />
                 <p className="text-[10px] text-zinc-500 font-bold uppercase">Weekly_Pot</p>
                 <p className="text-4xl font-black text-white">{profile.signal_to_spend || 0}</p>
               </div>
-              <div className="p-8 bg-black border border-emerald-500/20 text-center flex flex-col items-center shadow-[inset_0_0_20px_rgba(16,185,129,0.05)]">
+              <div className="p-8 bg-black border border-emerald-500/20 text-center flex flex-col items-center">
                 <Landmark className="text-emerald-400 mb-6" size={24} />
                 <p className="text-[10px] text-emerald-500/50 font-bold uppercase">Vault</p>
                 <p className="text-4xl font-black text-white">{profile.vault_signal || 0}</p>
@@ -227,7 +227,6 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* ADMIN TOOLS */}
             <div className="mt-20 border border-red-500/10 bg-red-500/5 p-8">
               <div className="flex items-center gap-3 mb-6 text-red-500 font-black uppercase text-[10px]">
                 <ShieldAlert size={16} /> Admin_Console
@@ -235,7 +234,7 @@ export default function DashboardPage() {
               <div className="flex gap-4">
                 <button onClick={() => injectTestSignal(10000)} className="bg-white/5 border border-white/10 px-6 py-3 text-[10px] font-black uppercase">Set Pot 10k</button>
                 <button onClick={triggerManualHarvest} className="bg-red-500/10 border border-red-500/20 px-6 py-3 text-[10px] font-black text-red-400 uppercase ml-auto">
-                  <RefreshCcw size={14} className="inline mr-2" /> Force Harvest
+                  Force Harvest
                 </button>
               </div>
             </div>
@@ -256,7 +255,6 @@ export default function DashboardPage() {
             <div className="flex-1 flex flex-col bg-black relative">
               <div className="px-8 py-3 border-b border-white/5 flex justify-between items-center bg-black">
                 <span className="text-[10px] font-black text-white uppercase">{activeDistrict?.name}</span>
-                {activeHashtag && <button onClick={() => setActiveHashtag(null)} className="text-[9px] text-emerald-500 font-black flex items-center gap-1"><X size={10} /> Clear_Filter</button>}
               </div>
 
               <div className="flex-1 overflow-y-auto p-8 space-y-6">
@@ -270,14 +268,6 @@ export default function DashboardPage() {
               </div>
 
               <div className="p-8 border-t border-white/5 bg-black relative">
-                <div className="absolute -top-6 left-8 h-6 flex items-center gap-2">
-                  {hasHighYieldTag ? (
-                    <span className="text-[8px] font-black text-emerald-400 flex items-center gap-1 animate-pulse"><Zap size={8} /> HIGH_YIELD (+5)</span>
-                  ) : (
-                    <span className="text-[8px] font-black text-zinc-700 uppercase">Standard (+3)</span>
-                  )}
-                  {isDividendEligible && <span className="text-[8px] font-black text-emerald-600 uppercase border-l border-white/10 pl-2">Dividend_Active</span>}
-                </div>
                 <form onSubmit={transmitSignal} className="max-w-2xl mx-auto flex bg-white/5 border border-white/10 relative">
                   <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase" placeholder="TRANSMIT_SIGNAL..." />
                   <button type="submit" className="px-8 bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black transition-all">Broadcast</button>
