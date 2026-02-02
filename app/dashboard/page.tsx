@@ -56,10 +56,9 @@ export default function DashboardPage() {
     if (pRes.data) setProfile(pRes.data);
     if (dRes.data) {
       setDistricts(dRes.data);
-      // Ensure Lobby is active on start
       if (!activeDistrict) {
         const lobby = dRes.data.find(d => d.slug === 'lobby');
-        if (lobby) enterRoom(lobby);
+        if (lobby) setActiveDistrict(lobby);
       }
     }
     loadBroadcasts();
@@ -82,7 +81,11 @@ export default function DashboardPage() {
   };
 
   const enterRoom = async (district: any) => {
-    if (channelRef.current) await supabase.removeChannel(channelRef.current);
+    if (channelRef.current) {
+        await supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+    }
+
     setMessages([]);
     setSignalFilter(null); 
     setView('chat');
@@ -133,12 +136,12 @@ export default function DashboardPage() {
     else { setStoreTarget(null); loadNexus(); }
   };
 
-  // FORCE CHAT RECOVERY WHEN SWITCHING VIEWS
+  // Critical fix: Re-subscribe whenever moving into chat view or changing rooms
   useEffect(() => {
     if (view === 'chat' && activeDistrict) {
         enterRoom(activeDistrict);
     }
-  }, [view]);
+  }, [view, activeDistrict?.slug]);
 
   useEffect(() => { loadNexus(); }, []);
   useEffect(() => { loadBroadcasts(); }, [activeDistrict, view]);
@@ -185,16 +188,15 @@ export default function DashboardPage() {
                 </div>
              </header>
 
+             {/* FULL DASHBOARD SHOP RESTORED */}
              <section className="space-y-6">
                 {!storeTarget ? (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {/* Tier Ping: Requires 0 XP */}
                     <button onClick={() => setStoreTarget({scope: 'tier', id: '', name: ''})} className="p-8 border border-white/5 bg-zinc-900/20 text-left hover:border-emerald-500/40 group">
                       <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">Tier_Ping</p>
                       <p className="text-2xl font-black text-white group-hover:text-emerald-500">-100</p>
                     </button>
                     
-                    {/* District Pulse: Requires 500 XP */}
                     <button 
                       disabled={profile.signal_score < 500}
                       onClick={() => setStoreTarget({scope: 'district', id: '', name: ''})} 
@@ -202,10 +204,8 @@ export default function DashboardPage() {
                     >
                       <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">{profile.signal_score < 500 && <Lock size={10} className="inline mr-2"/>}District_Pulse</p>
                       <p className="text-2xl font-black text-white group-hover:text-blue-500">-500</p>
-                      {profile.signal_score < 500 && <p className="text-[8px] font-bold text-zinc-600 mt-2 uppercase">Requires 500 Weekly Signal</p>}
                     </button>
 
-                    {/* Global Broadcast: Requires 1,000 XP */}
                     <button 
                       disabled={profile.signal_score < 1000}
                       onClick={() => executePurchase('global', 2000, null)} 
@@ -213,7 +213,6 @@ export default function DashboardPage() {
                     >
                       <p className="text-[10px] font-black text-emerald-500 uppercase mb-2">{profile.signal_score < 1000 && <Lock size={10} className="inline mr-2"/>}Global_Broadcast</p>
                       <p className="text-2xl font-black text-white">-2,000</p>
-                      {profile.signal_score < 1000 && <p className="text-[8px] font-bold text-zinc-600 mt-2 uppercase">Requires 1,000 Weekly Signal</p>}
                     </button>
                   </div>
                 ) : (
@@ -235,7 +234,7 @@ export default function DashboardPage() {
           <div className="h-full flex relative">
             {isFinanceSector && (
               <aside className="w-64 border-r border-white/5 bg-black flex flex-col shrink-0">
-                <div className="p-4 border-b border-white/5 bg-zinc-900/30 text-[10px] font-black text-zinc-500 uppercase">District_Tiers</div>
+                <div className="p-4 border-b border-white/5 bg-zinc-900/30 text-[10px] font-black text-zinc-500 uppercase tracking-widest">District_Tiers</div>
                 <div className="flex-1 p-4 space-y-3 overflow-y-auto">
                   {subTiers.map(tier => {
                     const isLocked = profile.finance_xp < tier.min_score;
@@ -268,7 +267,7 @@ export default function DashboardPage() {
                   <Hash size={12} className="text-emerald-500" /> {activeDistrict?.name}
                 </span>
                 {signalFilter && (
-                  <button onClick={() => setSignalFilter(null)} className="flex items-center gap-2 px-3 py-1 border border-red-500/40 text-red-500 text-[9px] font-black uppercase">
+                  <button onClick={() => setSignalFilter(null)} className="flex items-center gap-2 px-3 py-1 border border-red-500/40 text-red-500 text-[9px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
                     <FilterX size={12} /> CLEAR_FILTER
                   </button>
                 )}
@@ -286,7 +285,7 @@ export default function DashboardPage() {
 
               <div className="p-8 border-t border-white/5 bg-black flex flex-col items-center">
                 <form onSubmit={transmitSignal} className="w-full max-w-3xl flex bg-white/5 border border-white/10 mb-3">
-                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase" placeholder="TRANSMIT_SIGNAL..." />
+                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase tracking-wider" placeholder="TRANSMIT_SIGNAL..." />
                   <button type="submit" className="px-10 bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black transition-all">Send</button>
                 </form>
                 <div className={`text-[10px] font-black uppercase transition-all duration-500 ${isBoosted ? 'text-emerald-500 animate-pulse' : 'text-zinc-500'}`}>
@@ -297,7 +296,9 @@ export default function DashboardPage() {
 
             <aside className="w-64 border-l border-white/5 bg-black flex flex-col shrink-0">
                <div className="p-4 bg-zinc-900/50 border-b border-white/5 min-h-[100px]">
-                  <p className="text-[9px] font-black text-zinc-500 uppercase mb-3 flex items-center gap-2"><Radio size={12} className="text-blue-500" /> District_Pulse</p>
+                  <p className="text-[9px] font-black text-zinc-500 uppercase mb-3 flex items-center gap-2 tracking-widest">
+                    <Radio size={12} className="text-blue-500" /> District_Pulse
+                  </p>
                   {districtBroadcast && <div className="p-3 bg-blue-600/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-bold">{districtBroadcast.content}</div>}
                </div>
                <div className="p-6 space-y-6">
