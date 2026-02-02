@@ -80,16 +80,15 @@ export default function DashboardPage() {
     }
   };
 
-  const enterRoom = async (district: any) => {
+  // Logic Change: enterRoom now only handles the connection, not the view.
+  const connectToDistrict = async (district: any) => {
     if (channelRef.current) {
         await supabase.removeChannel(channelRef.current);
         channelRef.current = null;
     }
 
     setMessages([]);
-    setSignalFilter(null); 
-    setView('chat');
-    setActiveDistrict(district);
+    setSignalFilter(null);
     
     const { data: history } = await supabase.from("messages")
       .select("*, profiles(username, signal_score)")
@@ -136,18 +135,24 @@ export default function DashboardPage() {
     else { setStoreTarget(null); loadNexus(); }
   };
 
-  // Critical fix: Re-subscribe whenever moving into chat view or changing rooms
+  // THE MASTER SYNC EFFECT
+  // This handles all connection logic when view or district changes.
   useEffect(() => {
     if (view === 'chat' && activeDistrict) {
-        enterRoom(activeDistrict);
+        connectToDistrict(activeDistrict);
     }
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+      }
+    };
   }, [view, activeDistrict?.slug]);
 
   useEffect(() => { loadNexus(); }, []);
   useEffect(() => { loadBroadcasts(); }, [activeDistrict, view]);
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [filteredMessages]);
 
-  if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center text-emerald-500 font-mono text-[10px]">RECALIBRATING...</div>;
+  if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center text-emerald-500 font-mono text-[10px]">RECALIBRATING_NEXUS...</div>;
 
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
@@ -165,7 +170,7 @@ export default function DashboardPage() {
           </button>
           <div className="flex items-center gap-6 border-l border-white/10 pl-8">
             {districts.filter(d => !d.parent_slug).map(d => (
-              <button key={d.slug} disabled={profile.signal_score < d.min_score} onClick={() => enterRoom(d)} className={`text-[10px] font-black uppercase transition-all ${activeDistrict?.slug === d.slug && view === 'chat' ? 'text-emerald-400' : 'text-zinc-600'}`}>
+              <button key={d.slug} disabled={profile.signal_score < d.min_score} onClick={() => { setActiveDistrict(d); setView('chat'); }} className={`text-[10px] font-black uppercase transition-all ${activeDistrict?.slug === d.slug && view === 'chat' ? 'text-emerald-400' : 'text-zinc-600'}`}>
                 {d.name}
               </button>
             ))}
@@ -188,7 +193,6 @@ export default function DashboardPage() {
                 </div>
              </header>
 
-             {/* FULL DASHBOARD SHOP RESTORED */}
              <section className="space-y-6">
                 {!storeTarget ? (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -222,7 +226,11 @@ export default function DashboardPage() {
                         <button onClick={() => setStoreTarget(null)} className="text-[10px] text-zinc-500 uppercase font-black underline">Abort</button>
                      </div>
                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        {districts.filter(d => (storeTarget.scope === 'district' ? !d.parent_slug : d.parent_slug) && d.slug !== 'lobby').map(d => (
+                        {districts.filter(d => 
+                          (storeTarget.scope === 'district' ? !d.parent_slug : d.parent_slug) && 
+                          d.slug !== 'lobby' && 
+                          profile.signal_score >= d.min_score // GATING THE TARGET LIST
+                        ).map(d => (
                           <button key={d.slug} onClick={() => executePurchase(storeTarget.scope, storeTarget.scope === 'district' ? 500 : 100, d.slug)} className="p-4 border border-white/10 bg-black text-[10px] font-black uppercase text-zinc-400 hover:border-white/30">{d.name}</button>
                         ))}
                      </div>
@@ -242,7 +250,7 @@ export default function DashboardPage() {
                     const circumference = 2 * Math.PI * 12;
                     const strokeDashoffset = circumference - (progress / 100) * circumference;
                     return (
-                      <button key={tier.slug} disabled={isLocked} onClick={() => enterRoom(tier)} className={`w-full relative flex items-center gap-4 p-3 border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/50 bg-emerald-500/5 text-emerald-400' : isLocked ? 'border-white/5 opacity-40' : 'border-white/5 text-zinc-600 hover:text-white'}`}>
+                      <button key={tier.slug} disabled={isLocked} onClick={() => { setActiveDistrict(tier); }} className={`w-full relative flex items-center gap-4 p-3 border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/50 bg-emerald-500/5 text-emerald-400' : isLocked ? 'border-white/5 opacity-40' : 'border-white/5 text-zinc-600 hover:text-white'}`}>
                         <div className="relative w-8 h-8 shrink-0 flex items-center justify-center">
                           <svg className="w-full h-full -rotate-90">
                             <circle cx="16" cy="16" r="12" stroke="currentColor" strokeWidth="2" fill="transparent" className="text-white/5" />
