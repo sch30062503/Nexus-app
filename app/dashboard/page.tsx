@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
-  LayoutGrid, Lock, Globe, Wallet, BarChart3, Activity, Hash, Zap, Radio, X, Landmark, Trophy, Users, ShieldAlert, RefreshCcw, Plus, Megaphone, ChevronRight 
+  LayoutGrid, Lock, Globe, Wallet, BarChart3, Activity, Hash, Zap, Radio, X, Landmark, Trophy, Users, ShieldAlert, RefreshCcw, Plus, Megaphone, ChevronRight, Pin 
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -16,9 +16,12 @@ export default function DashboardPage() {
   const [newMessage, setNewMessage] = useState("");
   const [view, setView] = useState<'admin' | 'chat' | 'leaderboard'>('admin');
   const [loading, setLoading] = useState(true);
-  const [activeBroadcast, setActiveBroadcast] = useState<any>(null);
   
-  // Selection State for Store
+  // Separate states for the 3 announcement levels
+  const [globalBroadcast, setGlobalBroadcast] = useState<any>(null);
+  const [districtBroadcast, setDistrictBroadcast] = useState<any>(null);
+  const [tierBroadcast, setTierBroadcast] = useState<any>(null);
+  
   const [storeTarget, setStoreTarget] = useState<{scope: string, id: string, name: string} | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -26,7 +29,6 @@ export default function DashboardPage() {
 
   const isFinanceSector = useMemo(() => activeDistrict?.slug === 'finance' || activeDistrict?.slug?.startsWith('finance-'), [activeDistrict]);
   const subTiers = useMemo(() => districts.filter(d => d.parent_slug === 'finance'), [districts]);
-  const isDividendEligible = (profile?.signal_to_spend || 0) >= 10000;
 
   const loadBroadcasts = async () => {
     const { data } = await supabase
@@ -35,18 +37,21 @@ export default function DashboardPage() {
       .gt('expires_at', new Date().toISOString())
       .order('created_at', { ascending: false });
 
-    if (data && data.length > 0) {
-      const global = data.find(b => b.scope === 'global');
-      const district = data.find(b => b.scope === 'district' && (b.target_slug === activeDistrict?.parent_slug || b.target_slug === activeDistrict?.slug));
-      const tier = data.find(b => b.scope === 'tier' && b.target_slug === activeDistrict?.slug);
-      setActiveBroadcast(global || district || tier || null);
-    } else {
-      setActiveBroadcast(null);
+    if (data) {
+      // 1. Set Global (Always shows if exists)
+      setGlobalBroadcast(data.find(b => b.scope === 'global') || null);
+
+      // 2. Set District (Filtered by the current district user is in)
+      const currentDistrictSlug = activeDistrict?.parent_slug || activeDistrict?.slug;
+      setDistrictBroadcast(data.find(b => b.scope === 'district' && b.target_slug === currentDistrictSlug) || null);
+
+      // 3. Set Tier (Pinned only to the specific room)
+      setTierBroadcast(data.find(b => b.scope === 'tier' && b.target_slug === activeDistrict?.slug) || null);
     }
   };
 
   const executePurchase = async (scope: string, price: number, targetSlug: string | null) => {
-    const content = prompt(`Enter ${scope} message for ${targetSlug || 'Global'}:`);
+    const content = prompt(`Enter ${scope} message:`);
     if (!content) return;
 
     const { error } = await supabase.rpc('purchase_broadcast', {
@@ -57,9 +62,8 @@ export default function DashboardPage() {
       price: price
     });
 
-    if (error) {
-      alert(error.message);
-    } else {
+    if (error) alert(error.message);
+    else {
       setStoreTarget(null);
       loadNexus();
     }
@@ -106,19 +110,8 @@ export default function DashboardPage() {
     loadNexus();
   };
 
-  const triggerManualHarvest = async () => {
-    if (!confirm("Confirm Weekly Harvest?")) return;
-    await supabase.rpc('weekly_nexus_harvest');
-    loadNexus();
-  };
-
-  const injectTestSignal = async (amount: number) => {
-    await supabase.from('profiles').update({ signal_to_spend: (profile.signal_to_spend || 0) + amount }).eq('id', profile.id);
-    loadNexus();
-  };
-
   useEffect(() => { loadNexus(); }, []);
-  useEffect(() => { loadBroadcasts(); }, [activeDistrict]);
+  useEffect(() => { loadBroadcasts(); }, [activeDistrict, view]);
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center text-emerald-500 font-mono text-[10px]">RECALIBRATING_NEXUS...</div>;
@@ -126,163 +119,142 @@ export default function DashboardPage() {
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
       
-      {/* ANNOUNCEMENT TICKER */}
-      {activeBroadcast && (
-        <div className={`h-8 flex items-center px-6 gap-4 shrink-0 transition-colors ${
-          activeBroadcast.scope === 'global' ? 'bg-emerald-600 text-white' : 
-          activeBroadcast.scope === 'district' ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-emerald-400'
-        }`}>
-          <Megaphone size={12} className="animate-bounce" />
-          <span className="text-[9px] font-black uppercase tracking-widest">[{activeBroadcast.scope}]</span>
+      {/* 1. GLOBAL ANNOUNCEMENT (TOP OF SCREEN) */}
+      {globalBroadcast && (
+        <div className="h-8 bg-emerald-600 text-white flex items-center px-6 gap-4 shrink-0 z-[100] shadow-lg">
+          <Megaphone size={12} className="animate-pulse" />
+          <span className="text-[9px] font-black uppercase tracking-[0.2em]">Global_Signal:</span>
           <span className="text-[10px] font-bold truncate flex-1">
-            <span className="opacity-70 mr-2">{activeBroadcast.profiles?.username}:</span>
-            {activeBroadcast.content}
+             {globalBroadcast.content} — <span className="opacity-70">@{globalBroadcast.profiles?.username}</span>
           </span>
-          <span className="text-[8px] font-black opacity-30 uppercase">Signal_Live</span>
         </div>
       )}
 
       {/* NAV */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 gap-8 z-50 shrink-0">
         <button onClick={() => {setView('admin'); setStoreTarget(null);}} className={`flex items-center justify-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 bg-emerald-500/5' : 'hover:text-white'}`}>
-          <LayoutGrid size={16} /> <span className="text-xs font-black uppercase">Dashboard</span>
+          <LayoutGrid size={16} /> <span className="text-xs font-black uppercase tracking-widest text-white">Dashboard</span>
         </button>
         <div className="flex items-center gap-6 border-l border-white/10 pl-8">
           {districts.filter(d => !d.parent_slug).map(d => (
-            <button key={d.slug} disabled={profile.signal_score < d.min_score} onClick={() => enterRoom(d)} className={`flex items-center justify-center text-[10px] font-black uppercase transition-all ${activeDistrict?.slug === d.slug && view === 'chat' ? 'text-emerald-400' : 'text-zinc-600'}`}>
-              {profile.signal_score < d.min_score && <Lock size={10} className="mr-1" />} {d.name}
+            <button key={d.slug} disabled={profile.signal_score < d.min_score} onClick={() => enterRoom(d)} className={`flex items-center justify-center text-[10px] font-black uppercase transition-all ${activeDistrict?.slug === d.slug && view === 'chat' ? 'text-emerald-400' : 'text-zinc-600 hover:text-zinc-400'}`}>
+              {d.name}
             </button>
           ))}
         </div>
-        <div className="ml-auto flex items-center gap-8 border-l border-white/5 pl-8 text-right">
-           <div>
-              <p className="text-[7px] font-black text-zinc-600 uppercase">Pot</p>
-              <p className={`text-xs font-black ${isDividendEligible ? 'text-emerald-400' : 'text-white'}`}>{profile.signal_to_spend?.toLocaleString()}</p>
-           </div>
-           <div>
-              <p className="text-[7px] font-black text-emerald-600 uppercase">Global</p>
-              <p className="text-emerald-500 text-xs font-black">{profile.signal_score?.toLocaleString()}</p>
-           </div>
+        <div className="ml-auto text-right">
+          <p className="text-[8px] font-black text-emerald-500 uppercase">Vault_Access</p>
+          <p className="text-xs font-bold text-white tracking-widest">{profile.vault_signal?.toLocaleString()}</p>
         </div>
       </nav>
 
       <main className="flex-1 overflow-hidden">
         {view === 'admin' ? (
+          /* ADMIN DASHBOARD */
           <div className="h-full max-w-6xl mx-auto p-12 space-y-12 overflow-y-auto">
-            <header className="flex justify-between items-end border-b border-white/5 pb-10">
-              <div>
-                <p className="text-[10px] text-emerald-500 font-black uppercase tracking-[0.4em]">Node_Operator</p>
-                <h2 className="text-4xl font-black text-white uppercase">{profile.username}</h2>
-              </div>
-              <div className="text-right border-l border-white/5 pl-8">
-                <p className="text-[9px] text-zinc-600 font-black uppercase">Vault_Signal</p>
-                <p className="text-xl font-black text-emerald-500">{profile.vault_signal?.toLocaleString()}</p>
-              </div>
-            </header>
+             <header className="border-b border-white/5 pb-8">
+                <h2 className="text-4xl font-black text-white uppercase tracking-tighter">Nexus_Store</h2>
+                <p className="text-[10px] text-zinc-500 mt-2">Convert Vault Signal into Network Authority.</p>
+             </header>
 
-            {/* REFACTORED STORE WITH SELECTION */}
-            <section className="space-y-6">
-              <h3 className="text-xs font-black text-zinc-500 uppercase tracking-[0.3em]">Nexus_Broadcast_Store</h3>
-              
+             <section className="space-y-6">
               {!storeTarget ? (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <button onClick={() => setStoreTarget({scope: 'tier', id: '', name: ''})} className="p-6 border border-white/10 bg-black text-left hover:bg-white/5 transition-all group">
-                    <p className="text-[9px] font-black text-zinc-600 uppercase mb-1">Tier_Ping</p>
-                    <p className="text-xl font-black text-white group-hover:text-emerald-400">-100 Vault</p>
+                  <button onClick={() => setStoreTarget({scope: 'tier', id: '', name: ''})} className="p-8 border border-white/5 bg-zinc-900/20 text-left hover:border-emerald-500/40 transition-all group">
+                    <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">Local_Tier_Pin</p>
+                    <p className="text-2xl font-black text-white">-100</p>
+                    <p className="text-[9px] text-zinc-600 mt-4 uppercase">Pins message to top of specific room</p>
                   </button>
-                  <button onClick={() => setStoreTarget({scope: 'district', id: '', name: ''})} className="p-6 border border-blue-500/20 bg-black text-left hover:bg-white/5 transition-all group">
-                    <p className="text-[9px] font-black text-zinc-600 uppercase mb-1">District_Pulse</p>
-                    <p className="text-xl font-black text-white group-hover:text-blue-400">-500 Vault</p>
+                  <button onClick={() => setStoreTarget({scope: 'district', id: '', name: ''})} className="p-8 border border-white/5 bg-zinc-900/20 text-left hover:border-blue-500/40 transition-all group">
+                    <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">District_Pulse</p>
+                    <p className="text-2xl font-black text-white">-500</p>
+                    <p className="text-[9px] text-zinc-600 mt-4 uppercase">Shows above all rooms in a district</p>
                   </button>
-                  <button onClick={() => executePurchase('global', 2000, null)} className="p-6 border border-emerald-500/30 bg-black text-left hover:bg-white/5 transition-all group">
-                    <p className="text-[9px] font-black text-zinc-600 uppercase mb-1">Global_Signal</p>
-                    <p className="text-xl font-black text-white group-hover:text-emerald-400">-2,000 Vault</p>
+                  <button onClick={() => executePurchase('global', 2000, null)} className="p-8 border border-emerald-500/20 bg-emerald-500/5 text-left hover:bg-emerald-500/10 transition-all group">
+                    <p className="text-[10px] font-black text-emerald-500 uppercase mb-2">Global_Broadcast</p>
+                    <p className="text-2xl font-black text-white">-2,000</p>
+                    <p className="text-[9px] text-emerald-600/80 mt-4 uppercase">Shows at the top of the entire app</p>
                   </button>
                 </div>
               ) : (
-                <div className="bg-zinc-900/50 border border-white/10 p-8 animate-in fade-in zoom-in duration-300">
-                  <div className="flex justify-between items-center mb-8">
-                    <h4 className="text-[10px] font-black uppercase text-emerald-500">Select Target {storeTarget.scope}:</h4>
-                    <button onClick={() => setStoreTarget(null)} className="text-[10px] text-zinc-500 hover:text-white uppercase font-black">Cancel</button>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {districts
-                      .filter(d => storeTarget.scope === 'district' ? !d.parent_slug : d.parent_slug)
-                      .map(d => (
-                        <button key={d.slug} onClick={() => executePurchase(storeTarget.scope, storeTarget.scope === 'district' ? 500 : 100, d.slug)} className="p-4 border border-white/5 bg-black hover:border-emerald-500/50 text-[10px] font-black uppercase text-zinc-500 hover:text-white transition-all flex justify-between items-center">
-                          {d.name} <ChevronRight size={10} />
+                <div className="bg-zinc-900/50 border border-emerald-500/20 p-8">
+                   <div className="flex justify-between items-center mb-6">
+                      <p className="text-xs font-black text-white uppercase">Select Target for {storeTarget.scope}</p>
+                      <button onClick={() => setStoreTarget(null)} className="text-[10px] text-zinc-500 uppercase font-black">Cancel</button>
+                   </div>
+                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {districts.filter(d => storeTarget.scope === 'district' ? !d.parent_slug : d.parent_slug).map(d => (
+                        <button key={d.slug} onClick={() => executePurchase(storeTarget.scope, storeTarget.scope === 'district' ? 500 : 100, d.slug)} className="p-4 border border-white/10 bg-black hover:border-white/30 text-[10px] font-black uppercase text-zinc-400">
+                          {d.name}
                         </button>
                       ))}
-                  </div>
+                   </div>
                 </div>
               )}
-            </section>
-
-            {/* STATS */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-10 border-t border-white/5">
-              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center flex flex-col items-center">
-                <Wallet className="text-emerald-500 mb-6" size={24} />
-                <p className="text-[10px] text-zinc-500 font-bold uppercase">Weekly_Pot</p>
-                <p className="text-4xl font-black text-white">{profile.signal_to_spend || 0}</p>
-              </div>
-              <div className="p-8 bg-black border border-emerald-500/20 text-center flex flex-col items-center shadow-[inset_0_0_20px_rgba(16,185,129,0.05)]">
-                <Landmark className="text-emerald-400 mb-6" size={24} />
-                <p className="text-[10px] text-emerald-500/50 font-bold uppercase">Vault</p>
-                <p className="text-4xl font-black text-white">{profile.vault_signal || 0}</p>
-              </div>
-              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center flex flex-col items-center">
-                <BarChart3 className="text-blue-500 mb-6" size={24} />
-                <p className="text-[10px] text-zinc-500 font-bold uppercase">Global</p>
-                <p className="text-4xl font-black text-white">{profile.signal_score || 0}</p>
-              </div>
-              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center flex flex-col items-center">
-                <Activity className="text-purple-500 mb-6" size={24} />
-                <p className="text-[10px] text-zinc-500 font-bold uppercase">Finance_XP</p>
-                <p className="text-4xl font-black text-white">{profile.finance_xp || 0}</p>
-              </div>
-            </div>
-
-            {/* ADMIN TOOLS */}
-            <div className="mt-20 border border-red-500/10 bg-red-500/5 p-8 flex gap-4 items-center">
-               <ShieldAlert size={16} className="text-red-500" />
-               <button onClick={() => injectTestSignal(5000)} className="bg-white/5 border border-white/10 px-4 py-2 text-[9px] font-black uppercase">Add 5k Pot</button>
-               <button onClick={triggerManualHarvest} className="bg-red-500/10 border border-red-500/20 px-4 py-2 text-[9px] font-black text-red-400 uppercase ml-auto">Force Harvest</button>
-            </div>
+             </section>
           </div>
         ) : (
           /* CHAT VIEW */
           <div className="h-full flex relative">
+            
+            {/* DISTRICT SIDEBAR */}
             {isFinanceSector && (
-              <aside className="w-52 border-r border-white/5 bg-black flex flex-col p-4 gap-4">
-                {subTiers.map(tier => (
-                  <button key={tier.slug} disabled={profile.finance_xp < tier.min_score} onClick={() => enterRoom(tier)} className={`text-left p-3 rounded border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400' : 'border-white/5 text-zinc-600'}`}>
-                    <div className="text-[9px] font-bold uppercase truncate flex justify-between">{tier.name} {profile.finance_xp < tier.min_score && <Lock size={8} />}</div>
-                    <div className="h-1 w-full bg-zinc-900 mt-2"><div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, (profile.finance_xp / (tier.min_score || 1)) * 100)}%` }} /></div>
-                  </button>
-                ))}
+              <aside className="w-64 border-r border-white/5 bg-black flex flex-col overflow-hidden">
+                {/* 2. DISTRICT ANNOUNCEMENT (NEXT TO DISTRICT TITLE) */}
+                <div className="p-4 bg-zinc-900/50 border-b border-white/5">
+                  <p className="text-[9px] font-black text-zinc-500 uppercase mb-2 tracking-widest">Finance_District</p>
+                  {districtBroadcast && (
+                    <div className="p-3 bg-blue-600/10 border border-blue-500/30 rounded">
+                       <p className="text-[10px] text-blue-400 font-bold leading-tight">{districtBroadcast.content}</p>
+                       <p className="text-[7px] text-blue-500/50 mt-1 uppercase font-black">— {districtBroadcast.profiles?.username}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex-1 p-4 space-y-2 overflow-y-auto">
+                  {subTiers.map(tier => (
+                    <button key={tier.slug} disabled={profile.finance_xp < tier.min_score} onClick={() => enterRoom(tier)} className={`w-full text-left p-3 border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/50 bg-emerald-500/5 text-emerald-400' : 'border-white/5 text-zinc-600'}`}>
+                      <p className="text-[10px] font-black uppercase">{tier.name}</p>
+                    </button>
+                  ))}
+                </div>
               </aside>
             )}
             
+            {/* CHAT AREA */}
             <div className="flex-1 flex flex-col bg-black relative">
-              <div className="px-8 py-3 border-b border-white/5 flex justify-between items-center bg-black">
-                <span className="text-[10px] font-black text-white uppercase">{activeDistrict?.name}</span>
-                <button onClick={() => setView('admin')} className="text-[9px] text-zinc-600 font-bold hover:text-white uppercase tracking-tighter">← Exit_Room</button>
+              <div className="px-8 py-3 border-b border-white/5 flex justify-between items-center bg-black/50 backdrop-blur-md z-10">
+                <span className="text-[11px] font-black text-white uppercase tracking-[0.3em] flex items-center gap-2">
+                  <Hash size={12} className="text-emerald-500" /> {activeDistrict?.name}
+                </span>
+                <button onClick={() => setView('admin')} className="text-[9px] text-zinc-600 font-black hover:text-white uppercase">Exit_Room</button>
               </div>
+
+              {/* 3. TIER ANNOUNCEMENT (PINNED TO TOP OF CHAT) */}
+              {tierBroadcast && (
+                <div className="mx-8 mt-4 p-4 bg-zinc-900/80 border border-white/10 flex items-start gap-4 animate-in slide-in-from-top-2 duration-300">
+                  <Pin size={14} className="text-emerald-500 shrink-0 mt-1 rotate-45" />
+                  <div>
+                    <p className="text-xs text-zinc-200 font-bold leading-relaxed">{tierBroadcast.content}</p>
+                    <p className="text-[8px] text-emerald-500/50 mt-1 font-black uppercase">Channel_Priority_Msg by {tierBroadcast.profiles?.username}</p>
+                  </div>
+                </div>
+              )}
 
               <div className="flex-1 overflow-y-auto p-8 space-y-6">
                 {messages.map((m) => (
-                  <div key={m.id} className="border-l-2 border-white/10 pl-4 py-1">
-                    <p className="text-[10px] font-black text-zinc-600 uppercase mb-1">{m.profiles?.username} [{m.profiles?.signal_score}]</p>
-                    <p className="text-zinc-300 text-sm">{m.content}</p>
+                  <div key={m.id} className="group">
+                    <p className="text-[10px] font-black text-zinc-600 uppercase mb-1">{m.profiles?.username} <span className="opacity-0 group-hover:opacity-100 transition-all ml-2 text-zinc-800">{new Date(m.created_at).toLocaleTimeString()}</span></p>
+                    <p className="text-zinc-300 text-sm border-l border-white/5 pl-4">{m.content}</p>
                   </div>
                 ))}
                 <div ref={scrollRef} />
               </div>
 
               <div className="p-8 border-t border-white/5 bg-black">
-                <form onSubmit={transmitSignal} className="max-w-2xl mx-auto flex bg-white/5 border border-white/10">
-                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase" placeholder="TRANSMIT_SIGNAL..." />
-                  <button type="submit" className="px-8 bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black">Broadcast</button>
+                <form onSubmit={transmitSignal} className="max-w-3xl mx-auto flex bg-white/5 border border-white/10 focus-within:border-emerald-500/50 transition-all">
+                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase placeholder:text-zinc-800" placeholder="ENTER_TRANSMISSION..." />
+                  <button type="submit" className="px-10 bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black transition-all">Send</button>
                 </form>
               </div>
             </div>
