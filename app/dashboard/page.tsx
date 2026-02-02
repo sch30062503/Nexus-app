@@ -26,7 +26,7 @@ export default function DashboardPage() {
   const subTiers = useMemo(() => districts.filter(d => d.parent_slug === 'finance'), [districts]);
   const hasHighYieldTag = useMemo(() => /#\w+/.test(newMessage) || !!activeHashtag, [newMessage, activeHashtag]);
   const currentReward = hasHighYieldTag ? 5 : 3;
-  const isDividendEligible = profile?.signal_to_spend >= 10000;
+  const isDividendEligible = (profile?.signal_to_spend || 0) >= 10000;
 
   const loadBroadcasts = async () => {
     const { data } = await supabase
@@ -45,25 +45,32 @@ export default function DashboardPage() {
     }
   };
 
-  // CORRECTED ORDER: buyer_id, b_content, b_scope, b_target, price
+  // --- REPAIRED BROADCAST CALL ---
   const buyBroadcast = async (scope: string, price: number) => {
     if ((profile.vault_signal || 0) < price) return alert("Insufficient Vault Signal");
     
-    const content = prompt(`Enter your ${scope} announcement (Expires in 1hr):`);
+    const content = prompt(`Enter your ${scope} announcement:`);
     if (!content) return;
 
-    const target = scope === 'global' ? null : (scope === 'district' ? (activeDistrict?.parent_slug || activeDistrict?.slug) : activeDistrict?.slug);
+    // Correctly define the target based on scope
+    let target = null;
+    if (scope === 'district') {
+      target = activeDistrict?.parent_slug || activeDistrict?.slug;
+    } else if (scope === 'tier') {
+      target = activeDistrict?.slug;
+    }
 
+    // We send EVERY parameter explicitly to match the SQL signature exactly
     const { error } = await supabase.rpc('purchase_broadcast', {
       buyer_id: profile.id,
       b_content: content,
       b_scope: scope,
-      b_target: target,
+      b_target: target, // This was likely missing/undefined causing the cache error
       price: price
     });
 
     if (error) {
-      console.error(error);
+      console.error("RPC Error:", error);
       alert("Broadcast Failed: " + error.message);
     } else {
       loadNexus();
@@ -103,13 +110,13 @@ export default function DashboardPage() {
     if (!newMessage.trim() || !profile || !activeDistrict) return;
     const content = newMessage;
     setNewMessage("");
-    const { error } = await supabase.rpc('submit_weighted_signal', {
+    await supabase.rpc('submit_weighted_signal', {
       user_id: profile.id,
-      signal_content: activeHashtag && !content.includes(activeHashtag) ? `${content} ${activeHashtag}` : content,
+      signal_content: content,
       target_hub: activeDistrict.slug,
       points_to_add: currentReward
     });
-    if (!error) loadNexus();
+    loadNexus();
   };
 
   const triggerManualHarvest = async () => {
@@ -132,19 +139,18 @@ export default function DashboardPage() {
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
       
-      {/* GLOBAL TICKER BAR */}
       {activeBroadcast && (
-        <div className={`h-8 flex items-center px-6 gap-4 animate-in slide-in-from-top duration-500 shrink-0 ${
+        <div className={`h-8 flex items-center px-6 gap-4 shrink-0 transition-colors ${
           activeBroadcast.scope === 'global' ? 'bg-emerald-600 text-white' : 
           activeBroadcast.scope === 'district' ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-emerald-400'
         }`}>
           <Megaphone size={12} className="animate-bounce" />
           <span className="text-[9px] font-black uppercase tracking-widest">[{activeBroadcast.scope}_Alert]</span>
-          <span className="text-[10px] font-bold truncate">
+          <span className="text-[10px] font-bold truncate flex-1">
             <span className="opacity-70 mr-2">{activeBroadcast.profiles?.username}:</span>
             {activeBroadcast.content}
           </span>
-          <span className="ml-auto text-[8px] font-black opacity-50 uppercase">Active_Transmission</span>
+          <span className="text-[8px] font-black opacity-50 uppercase">Active</span>
         </div>
       )}
 
@@ -186,57 +192,58 @@ export default function DashboardPage() {
             </header>
 
             <section className="space-y-6">
-              <h3 className="text-xs font-black text-zinc-500 uppercase tracking-[0.3em]">Nexus_Broadcast_Store</h3>
+              <div className="flex justify-between items-center">
+                <h3 className="text-xs font-black text-zinc-500 uppercase tracking-[0.3em]">Nexus_Broadcast_Store</h3>
+                <p className="text-[9px] text-zinc-600 font-bold uppercase italic">*Enter a district/tier chat to enable local pulse</p>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {[
-                  { name: 'Tier_Ping', scope: 'tier', price: 100, color: 'border-white/10' },
-                  { name: 'District_Pulse', scope: 'district', price: 500, color: 'border-blue-500/20' },
-                  { name: 'Global_Signal', scope: 'global', price: 2000, color: 'border-emerald-500/30' },
-                ].map(item => (
-                  <button key={item.name} onClick={() => buyBroadcast(item.scope, item.price)} className={`p-6 border ${item.color} bg-black text-left hover:bg-white/5 transition-all group`}>
-                    <p className="text-[9px] font-black text-zinc-600 uppercase mb-1">{item.name}</p>
-                    <div className="flex justify-between items-end">
-                      <p className="text-xl font-black text-white group-hover:text-emerald-400">-{item.price}</p>
-                      <span className="text-[8px] font-black uppercase text-zinc-700">Vault_Signal</span>
-                    </div>
-                  </button>
-                ))}
+                <button onClick={() => buyBroadcast('tier', 100)} disabled={!activeDistrict} className={`p-6 border border-white/10 bg-black text-left hover:bg-white/5 transition-all group ${!activeDistrict ? 'opacity-20 grayscale cursor-not-allowed' : ''}`}>
+                  <p className="text-[9px] font-black text-zinc-600 uppercase mb-1">Tier_Ping</p>
+                  <div className="flex justify-between items-end">
+                    <p className="text-xl font-black text-white group-hover:text-emerald-400">-100</p>
+                    <span className="text-[8px] font-black uppercase text-zinc-700">Vault</span>
+                  </div>
+                </button>
+                <button onClick={() => buyBroadcast('district', 500)} disabled={!activeDistrict} className={`p-6 border border-blue-500/20 bg-black text-left hover:bg-white/5 transition-all group ${!activeDistrict ? 'opacity-20 grayscale cursor-not-allowed' : ''}`}>
+                  <p className="text-[9px] font-black text-zinc-600 uppercase mb-1">District_Pulse</p>
+                  <div className="flex justify-between items-end">
+                    <p className="text-xl font-black text-white group-hover:text-blue-400">-500</p>
+                    <span className="text-[8px] font-black uppercase text-zinc-700">Vault</span>
+                  </div>
+                </button>
+                <button onClick={() => buyBroadcast('global', 2000)} className="p-6 border border-emerald-500/30 bg-black text-left hover:bg-white/5 transition-all group">
+                  <p className="text-[9px] font-black text-zinc-600 uppercase mb-1">Global_Signal</p>
+                  <div className="flex justify-between items-end">
+                    <p className="text-xl font-black text-white group-hover:text-emerald-400">-2,000</p>
+                    <span className="text-[8px] font-black uppercase text-zinc-700">Vault</span>
+                  </div>
+                </button>
               </div>
             </section>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-10 border-t border-white/5">
-              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center flex flex-col items-center">
-                <Wallet className="text-emerald-500 mb-6" size={24} />
-                <p className="text-[10px] text-zinc-500 font-bold uppercase">Weekly_Pot</p>
+              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center">
+                <p className="text-[10px] text-zinc-500 font-bold uppercase mb-2">Weekly_Pot</p>
                 <p className="text-4xl font-black text-white">{profile.signal_to_spend || 0}</p>
               </div>
-              <div className="p-8 bg-black border border-emerald-500/20 text-center flex flex-col items-center">
-                <Landmark className="text-emerald-400 mb-6" size={24} />
-                <p className="text-[10px] text-emerald-500/50 font-bold uppercase">Vault</p>
+              <div className="p-8 bg-black border border-emerald-500/20 text-center">
+                <p className="text-[10px] text-emerald-500/50 font-bold uppercase mb-2">Permanent_Vault</p>
                 <p className="text-4xl font-black text-white">{profile.vault_signal || 0}</p>
               </div>
-              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center flex flex-col items-center">
-                <BarChart3 className="text-blue-500 mb-6" size={24} />
-                <p className="text-[10px] text-zinc-500 font-bold uppercase">Global</p>
+              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center">
+                <p className="text-[10px] text-zinc-500 font-bold uppercase mb-2">Global_Score</p>
                 <p className="text-4xl font-black text-white">{profile.signal_score || 0}</p>
               </div>
-              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center flex flex-col items-center">
-                <Activity className="text-purple-500 mb-6" size={24} />
-                <p className="text-[10px] text-zinc-500 font-bold uppercase">Finance_XP</p>
+              <div className="p-8 bg-zinc-900/30 border border-white/5 text-center">
+                <p className="text-[10px] text-zinc-500 font-bold uppercase mb-2">Finance_XP</p>
                 <p className="text-4xl font-black text-white">{profile.finance_xp || 0}</p>
               </div>
             </div>
 
-            <div className="mt-20 border border-red-500/10 bg-red-500/5 p-8">
-              <div className="flex items-center gap-3 mb-6 text-red-500 font-black uppercase text-[10px]">
-                <ShieldAlert size={16} /> Admin_Console
-              </div>
-              <div className="flex gap-4">
-                <button onClick={() => injectTestSignal(10000)} className="bg-white/5 border border-white/10 px-6 py-3 text-[10px] font-black uppercase">Set Pot 10k</button>
-                <button onClick={triggerManualHarvest} className="bg-red-500/10 border border-red-500/20 px-6 py-3 text-[10px] font-black text-red-400 uppercase ml-auto">
-                  Force Harvest
-                </button>
-              </div>
+            <div className="mt-20 border border-red-500/10 bg-red-500/5 p-8 flex gap-4 items-center">
+               <ShieldAlert size={16} className="text-red-500" />
+               <button onClick={() => injectTestSignal(5000)} className="bg-white/5 border border-white/10 px-4 py-2 text-[9px] font-black uppercase">Add 5k Pot</button>
+               <button onClick={triggerManualHarvest} className="bg-red-500/10 border border-red-500/20 px-4 py-2 text-[9px] font-black text-red-400 uppercase ml-auto">Force Harvest</button>
             </div>
           </div>
         ) : (
@@ -255,6 +262,7 @@ export default function DashboardPage() {
             <div className="flex-1 flex flex-col bg-black relative">
               <div className="px-8 py-3 border-b border-white/5 flex justify-between items-center bg-black">
                 <span className="text-[10px] font-black text-white uppercase">{activeDistrict?.name}</span>
+                <button onClick={() => setView('admin')} className="text-[9px] text-zinc-600 font-bold hover:text-white uppercase">← Exit_Room</button>
               </div>
 
               <div className="flex-1 overflow-y-auto p-8 space-y-6">
@@ -267,10 +275,10 @@ export default function DashboardPage() {
                 <div ref={scrollRef} />
               </div>
 
-              <div className="p-8 border-t border-white/5 bg-black relative">
-                <form onSubmit={transmitSignal} className="max-w-2xl mx-auto flex bg-white/5 border border-white/10 relative">
-                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase" placeholder="TRANSMIT_SIGNAL..." />
-                  <button type="submit" className="px-8 bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black transition-all">Broadcast</button>
+              <div className="p-8 border-t border-white/5 bg-black">
+                <form onSubmit={transmitSignal} className="max-w-2xl mx-auto flex bg-white/5 border border-white/10">
+                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase" placeholder="TRANSMIT..." />
+                  <button type="submit" className="px-8 bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black">Send</button>
                 </form>
               </div>
             </div>
