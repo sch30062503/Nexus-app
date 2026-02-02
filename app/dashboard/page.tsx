@@ -56,10 +56,12 @@ export default function DashboardPage() {
     if (pRes.data) setProfile(pRes.data);
     if (dRes.data) {
       setDistricts(dRes.data);
-      // Auto-select Lobby if nothing is active
       if (!activeDistrict) {
         const lobby = dRes.data.find(d => d.slug === 'lobby');
-        if (lobby) enterRoom(lobby);
+        if (lobby) {
+            setActiveDistrict(lobby);
+            enterRoom(lobby);
+        }
       }
     }
     loadBroadcasts();
@@ -83,7 +85,6 @@ export default function DashboardPage() {
 
   const enterRoom = async (district: any) => {
     if (channelRef.current) await supabase.removeChannel(channelRef.current);
-    
     setMessages([]);
     setSignalFilter(null); 
     setView('chat');
@@ -113,38 +114,23 @@ export default function DashboardPage() {
   const transmitSignal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !profile || !activeDistrict) return;
-
     let finalContent = newMessage;
-    if (signalFilter && !finalContent.includes(signalFilter)) {
-      finalContent = `${finalContent} ${signalFilter}`;
-    }
-
+    if (signalFilter && !finalContent.includes(signalFilter)) finalContent = `${finalContent} ${signalFilter}`;
     const points = finalContent.includes("#") ? 5 : 3;
     setNewMessage("");
-
     await supabase.rpc('submit_weighted_signal', {
-      user_id: profile.id, 
-      signal_content: finalContent, 
-      target_hub: activeDistrict.slug, 
-      points_to_add: points
+      user_id: profile.id, signal_content: finalContent, target_hub: activeDistrict.slug, points_to_add: points
     });
-    
     loadNexus();
   };
 
   const executePurchase = async (scope: string, price: number, targetSlug: string | null) => {
-    if (targetSlug === 'lobby') return alert("Lobby is a broadcast-free zone.");
+    if (targetSlug === 'lobby') return alert("Lobby is protected.");
     const content = prompt(`Enter ${scope} message:`);
     if (!content) return;
-
     const { error } = await supabase.rpc('purchase_broadcast', {
-      buyer_id: profile.id, 
-      b_content: content, 
-      b_scope: scope, 
-      b_target: targetSlug, 
-      price: price
+      buyer_id: profile.id, b_content: content, b_scope: scope, b_target: targetSlug, price: price
     });
-
     if (error) alert(error.message);
     else { setStoreTarget(null); loadNexus(); }
   };
@@ -153,11 +139,10 @@ export default function DashboardPage() {
   useEffect(() => { loadBroadcasts(); }, [activeDistrict, view]);
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [filteredMessages]);
 
-  if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center text-emerald-500 font-mono text-[10px]">RECALIBRATING_NEXUS...</div>;
+  if (loading || !profile) return <div className="h-screen bg-black flex items-center justify-center text-emerald-500 font-mono text-[10px]">RECALIBRATING...</div>;
 
   return (
     <div className="h-[100dvh] flex flex-col bg-[#020202] text-zinc-400 font-mono overflow-hidden">
-      
       {globalBroadcast && (
         <div className="h-8 bg-emerald-600 text-white flex items-center px-6 gap-4 shrink-0 z-[100]">
           <Megaphone size={12} className="animate-pulse" />
@@ -165,7 +150,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* NAVIGATION */}
       <nav className="h-16 flex items-center border-b border-white/5 bg-black px-6 justify-between z-50 shrink-0">
         <div className="flex items-center gap-8">
           <button onClick={() => setView('admin')} className={`flex items-center justify-center gap-2 px-4 py-2 rounded transition-all ${view === 'admin' ? 'text-emerald-500 bg-emerald-500/5' : 'hover:text-white'}`}>
@@ -173,19 +157,12 @@ export default function DashboardPage() {
           </button>
           <div className="flex items-center gap-6 border-l border-white/10 pl-8">
             {districts.filter(d => !d.parent_slug).map(d => (
-              <button 
-                key={d.slug} 
-                disabled={profile.signal_score < d.min_score} 
-                onClick={() => enterRoom(d)} 
-                className={`text-[10px] font-black uppercase transition-all ${activeDistrict?.slug === d.slug && view === 'chat' ? 'text-emerald-400' : 'text-zinc-600 hover:text-white'}`}
-              >
+              <button key={d.slug} disabled={profile.signal_score < d.min_score} onClick={() => enterRoom(d)} className={`text-[10px] font-black uppercase transition-all ${activeDistrict?.slug === d.slug && view === 'chat' ? 'text-emerald-400' : 'text-zinc-600'}`}>
                 {d.name}
               </button>
             ))}
           </div>
         </div>
-        
-        {/* WEEKLY TOTAL */}
         <div className="flex items-center gap-4 px-4 py-2 bg-zinc-900/50 border border-white/5 rounded">
           <p className="text-[9px] font-black text-zinc-500 uppercase tracking-tighter">Weekly_Total</p>
           <p className="text-sm font-black text-white">{profile.signal_score?.toLocaleString() || 0}</p>
@@ -198,52 +175,66 @@ export default function DashboardPage() {
              <header className="border-b border-white/5 pb-8">
                 <h2 className="text-4xl font-black text-white uppercase">{profile.username}</h2>
                 <div className="px-4 py-2 bg-zinc-900 border border-white/5 rounded inline-block mt-4">
-                  <p className="text-[8px] text-zinc-500 uppercase font-black tracking-[0.2em]">Vault_Signal</p>
+                  <p className="text-[8px] text-zinc-500 uppercase font-black">Vault_Signal</p>
                   <p className="text-xl font-black text-emerald-500">{profile.vault_signal?.toLocaleString()}</p>
                 </div>
              </header>
 
-             <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <button onClick={() => setStoreTarget({scope: 'tier', id: '', name: ''})} className="p-8 border border-white/5 bg-zinc-900/20 text-left hover:border-emerald-500/40 group">
-                  <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">Tier_Ping</p>
-                  <p className="text-2xl font-black text-white group-hover:text-emerald-500 transition-colors">-100</p>
-                </button>
+             {/* DASHBOARD SHOP RESTORED */}
+             <section className="space-y-6">
+                {!storeTarget ? (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <button onClick={() => setStoreTarget({scope: 'tier', id: '', name: ''})} className="p-8 border border-white/5 bg-zinc-900/20 text-left hover:border-emerald-500/40 group">
+                      <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">Tier_Ping</p>
+                      <p className="text-2xl font-black text-white group-hover:text-emerald-500">-100</p>
+                    </button>
+                    <button onClick={() => setStoreTarget({scope: 'district', id: '', name: ''})} className="p-8 border border-white/5 bg-zinc-900/20 text-left hover:border-blue-500/40 group">
+                      <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">District_Pulse</p>
+                      <p className="text-2xl font-black text-white group-hover:text-blue-500">-500</p>
+                    </button>
+                    <button onClick={() => executePurchase('global', 2000, null)} className="p-8 border border-emerald-500/20 bg-emerald-500/5 text-left hover:bg-emerald-500/10 group">
+                      <p className="text-[10px] font-black text-emerald-500 uppercase mb-2">Global_Broadcast</p>
+                      <p className="text-2xl font-black text-white">-2,000</p>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bg-zinc-900/50 border border-emerald-500/20 p-8 rounded">
+                     <div className="flex justify-between items-center mb-6">
+                        <p className="text-xs font-black text-white uppercase tracking-widest">Select Target Sector: {storeTarget.scope}</p>
+                        <button onClick={() => setStoreTarget(null)} className="text-[10px] text-zinc-500 uppercase font-black underline">Abort</button>
+                     </div>
+                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        {districts.filter(d => (storeTarget.scope === 'district' ? !d.parent_slug : d.parent_slug) && d.slug !== 'lobby').map(d => (
+                          <button key={d.slug} onClick={() => executePurchase(storeTarget.scope, storeTarget.scope === 'district' ? 500 : 100, d.slug)} className="p-4 border border-white/10 bg-black text-[10px] font-black uppercase text-zinc-400 hover:border-white/30">{d.name}</button>
+                        ))}
+                     </div>
+                  </div>
+                )}
              </section>
           </div>
         ) : (
           <div className="h-full flex relative">
-            
-            {/* TIERS SIDEBAR WITH RESTORED PROGRESS WHEELS */}
             {isFinanceSector && (
               <aside className="w-64 border-r border-white/5 bg-black flex flex-col shrink-0">
-                <div className="p-4 border-b border-white/5 bg-zinc-900/30 text-[10px] font-black text-zinc-500 uppercase tracking-widest">District_Tiers</div>
+                <div className="p-4 border-b border-white/5 bg-zinc-900/30 text-[10px] font-black text-zinc-500 uppercase">District_Tiers</div>
                 <div className="flex-1 p-4 space-y-3 overflow-y-auto">
                   {subTiers.map(tier => {
                     const isLocked = profile.finance_xp < tier.min_score;
                     const progress = Math.min(100, Math.round((profile.finance_xp / tier.min_score) * 100));
-                    const circumference = 2 * Math.PI * 12; 
+                    const circumference = 2 * Math.PI * 12;
                     const strokeDashoffset = circumference - (progress / 100) * circumference;
-
                     return (
-                      <button 
-                        key={tier.slug} 
-                        disabled={isLocked} 
-                        onClick={() => enterRoom(tier)} 
-                        className={`w-full relative flex items-center gap-4 p-3 border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/50 bg-emerald-500/5 text-emerald-400' : isLocked ? 'border-white/5 opacity-40' : 'border-white/5 text-zinc-600 hover:text-white'}`}
-                      >
-                        {/* PROGRESS WHEEL */}
+                      <button key={tier.slug} disabled={isLocked} onClick={() => enterRoom(tier)} className={`w-full relative flex items-center gap-4 p-3 border transition-all ${activeDistrict.slug === tier.slug ? 'border-emerald-500/50 bg-emerald-500/5 text-emerald-400' : isLocked ? 'border-white/5 opacity-40' : 'border-white/5 text-zinc-600 hover:text-white'}`}>
                         <div className="relative w-8 h-8 shrink-0 flex items-center justify-center">
                           <svg className="w-full h-full -rotate-90">
                             <circle cx="16" cy="16" r="12" stroke="currentColor" strokeWidth="2" fill="transparent" className="text-white/5" />
                             <circle cx="16" cy="16" r="12" stroke="currentColor" strokeWidth="2" fill="transparent" strokeDasharray={circumference} style={{ strokeDashoffset }} className={isLocked ? "text-zinc-700" : "text-emerald-500"} />
                           </svg>
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            {isLocked ? <Lock size={10} className="text-zinc-500" /> : <Zap size={10} className="text-emerald-500" />}
-                          </div>
+                          <div className="absolute inset-0 flex items-center justify-center">{isLocked ? <Lock size={10} /> : <Zap size={10} />}</div>
                         </div>
                         <div className="text-left">
                           <p className="text-[10px] font-black uppercase truncate">{tier.name}</p>
-                          {isLocked && <p className="text-[8px] font-bold text-zinc-500 uppercase">{progress}% (Need {tier.min_score})</p>}
+                          {isLocked && <p className="text-[8px] font-bold text-zinc-500 uppercase">{progress}% (Target: {tier.min_score})</p>}
                         </div>
                       </button>
                     );
@@ -252,14 +243,13 @@ export default function DashboardPage() {
               </aside>
             )}
             
-            {/* CHAT AREA */}
             <div className="flex-1 flex flex-col bg-black relative">
               <div className="px-8 py-3 border-b border-white/5 flex justify-between items-center bg-black/50 z-10">
                 <span className="text-[11px] font-black text-white uppercase tracking-[0.3em] flex items-center gap-2">
                   <Hash size={12} className="text-emerald-500" /> {activeDistrict?.name}
                 </span>
                 {signalFilter && (
-                  <button onClick={() => setSignalFilter(null)} className="flex items-center gap-2 px-3 py-1 border border-red-500/40 text-red-500 text-[9px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
+                  <button onClick={() => setSignalFilter(null)} className="flex items-center gap-2 px-3 py-1 border border-red-500/40 text-red-500 text-[9px] font-black uppercase">
                     <FilterX size={12} /> CLEAR_FILTER
                   </button>
                 )}
@@ -277,27 +267,19 @@ export default function DashboardPage() {
 
               <div className="p-8 border-t border-white/5 bg-black flex flex-col items-center">
                 <form onSubmit={transmitSignal} className="w-full max-w-3xl flex bg-white/5 border border-white/10 mb-3">
-                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase tracking-wider" placeholder="TRANSMIT_SIGNAL..." />
+                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-transparent p-4 text-xs text-white outline-none font-bold uppercase" placeholder="TRANSMIT_SIGNAL..." />
                   <button type="submit" className="px-10 bg-zinc-900 text-emerald-500 font-black text-[10px] uppercase border-l border-white/10 hover:bg-emerald-500 hover:text-black transition-all">Send</button>
                 </form>
-                {/* SIGNAL WORTH INDICATOR */}
                 <div className={`text-[10px] font-black uppercase transition-all duration-500 ${isBoosted ? 'text-emerald-500 animate-pulse' : 'text-zinc-500'}`}>
                   Transmission Worth {isBoosted ? '5' : '3'} Signal {signalFilter && `(Tuned to ${signalFilter})`}
                 </div>
               </div>
             </div>
 
-            {/* TUNER SIDEBAR */}
             <aside className="w-64 border-l border-white/5 bg-black flex flex-col shrink-0">
                <div className="p-4 bg-zinc-900/50 border-b border-white/5 min-h-[100px]">
-                  <p className="text-[9px] font-black text-zinc-500 uppercase mb-3 flex items-center gap-2 tracking-widest">
-                    <Radio size={12} className="text-blue-500" /> District_Pulse
-                  </p>
-                  {districtBroadcast && (
-                    <div className="p-3 bg-blue-600/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-bold leading-tight">
-                       {districtBroadcast.content}
-                    </div>
-                  )}
+                  <p className="text-[9px] font-black text-zinc-500 uppercase mb-3 flex items-center gap-2"><Radio size={12} className="text-blue-500" /> District_Pulse</p>
+                  {districtBroadcast && <div className="p-3 bg-blue-600/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-bold">{districtBroadcast.content}</div>}
                </div>
                <div className="p-6 space-y-6">
                   <p className="text-[10px] font-black uppercase text-zinc-500 tracking-widest flex items-center gap-2"><TrendingUp size={14}/> Frequencies</p>
