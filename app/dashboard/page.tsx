@@ -56,12 +56,10 @@ export default function DashboardPage() {
     if (pRes.data) setProfile(pRes.data);
     if (dRes.data) {
       setDistricts(dRes.data);
+      // Ensure Lobby is active on start
       if (!activeDistrict) {
         const lobby = dRes.data.find(d => d.slug === 'lobby');
-        if (lobby) {
-            setActiveDistrict(lobby);
-            enterRoom(lobby);
-        }
+        if (lobby) enterRoom(lobby);
       }
     }
     loadBroadcasts();
@@ -135,6 +133,13 @@ export default function DashboardPage() {
     else { setStoreTarget(null); loadNexus(); }
   };
 
+  // FORCE CHAT RECOVERY WHEN SWITCHING VIEWS
+  useEffect(() => {
+    if (view === 'chat' && activeDistrict) {
+        enterRoom(activeDistrict);
+    }
+  }, [view]);
+
   useEffect(() => { loadNexus(); }, []);
   useEffect(() => { loadBroadcasts(); }, [activeDistrict, view]);
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [filteredMessages]);
@@ -180,21 +185,35 @@ export default function DashboardPage() {
                 </div>
              </header>
 
-             {/* DASHBOARD SHOP RESTORED */}
              <section className="space-y-6">
                 {!storeTarget ? (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {/* Tier Ping: Requires 0 XP */}
                     <button onClick={() => setStoreTarget({scope: 'tier', id: '', name: ''})} className="p-8 border border-white/5 bg-zinc-900/20 text-left hover:border-emerald-500/40 group">
                       <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">Tier_Ping</p>
                       <p className="text-2xl font-black text-white group-hover:text-emerald-500">-100</p>
                     </button>
-                    <button onClick={() => setStoreTarget({scope: 'district', id: '', name: ''})} className="p-8 border border-white/5 bg-zinc-900/20 text-left hover:border-blue-500/40 group">
-                      <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">District_Pulse</p>
+                    
+                    {/* District Pulse: Requires 500 XP */}
+                    <button 
+                      disabled={profile.signal_score < 500}
+                      onClick={() => setStoreTarget({scope: 'district', id: '', name: ''})} 
+                      className={`p-8 border border-white/5 text-left transition-all ${profile.signal_score >= 500 ? 'bg-zinc-900/20 hover:border-blue-500/40 group' : 'opacity-20 grayscale cursor-not-allowed'}`}
+                    >
+                      <p className="text-[10px] font-black text-zinc-500 uppercase mb-2">{profile.signal_score < 500 && <Lock size={10} className="inline mr-2"/>}District_Pulse</p>
                       <p className="text-2xl font-black text-white group-hover:text-blue-500">-500</p>
+                      {profile.signal_score < 500 && <p className="text-[8px] font-bold text-zinc-600 mt-2 uppercase">Requires 500 Weekly Signal</p>}
                     </button>
-                    <button onClick={() => executePurchase('global', 2000, null)} className="p-8 border border-emerald-500/20 bg-emerald-500/5 text-left hover:bg-emerald-500/10 group">
-                      <p className="text-[10px] font-black text-emerald-500 uppercase mb-2">Global_Broadcast</p>
+
+                    {/* Global Broadcast: Requires 1,000 XP */}
+                    <button 
+                      disabled={profile.signal_score < 1000}
+                      onClick={() => executePurchase('global', 2000, null)} 
+                      className={`p-8 border border-emerald-500/20 text-left transition-all ${profile.signal_score >= 1000 ? 'bg-emerald-500/5 hover:bg-emerald-500/10 group' : 'opacity-20 grayscale cursor-not-allowed'}`}
+                    >
+                      <p className="text-[10px] font-black text-emerald-500 uppercase mb-2">{profile.signal_score < 1000 && <Lock size={10} className="inline mr-2"/>}Global_Broadcast</p>
                       <p className="text-2xl font-black text-white">-2,000</p>
+                      {profile.signal_score < 1000 && <p className="text-[8px] font-bold text-zinc-600 mt-2 uppercase">Requires 1,000 Weekly Signal</p>}
                     </button>
                   </div>
                 ) : (
